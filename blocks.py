@@ -1,0 +1,106 @@
+import torch
+import torch.nn as nn
+from torch.nn.modules import padding
+from custom_layers import EqualizedConv2dLayer, NoiseLayer, StyleMod
+
+class InitialGBlock(nn.Module):
+    def __init__(self, start_img_size, start_channel, out_ch, latent_dim, **kwargs):
+        self.const = nn.Parameter(torch.randn(start_img_size, start_img_size, start_channel))
+        self.noise1 = NoiseLayer(start_channel)
+        self.style_transfer1 = StyleMod(latent_dim, start_channel)
+        self.conv = EqualizedConvBlock(start_channel, out_ch, kernel_size=kwargs['kernel-size'], activation=kwargs['activation'], **kwargs)
+        self.noise2 = NoiseLayer(out_ch)
+        self.style_transfer2 = StyleMod(latent_dim, out_ch)
+
+    def forward(self, latent_vector):
+        img = self.noise1(self.const)
+        
+        # Instance normalization
+        img = self.instance_norm(img)
+
+        img = self.style_transfer1(img, latent_vector)
+
+        img = self.conv(img)
+        img = self.noise2(img)
+
+        # Instance normalization
+        img = self.instance_norm(img)
+        img = self.style_transfer2(img, latent_vector)
+
+        return img
+
+    def instance_norm(self, img):
+        mean = torch.mean(img, dim=1, keepdim=True)
+        std = torch.std(img, dim=1, keepdim=True)
+
+        return (img - mean)/std
+
+class FinalDBlock(nn.Module):
+    pass
+
+class SynthesisBlock(nn.Module):
+    # Things to do - upsample, apply conv2d, add noise, apply ADAIN, apply conv2d, add noise and apply ADAIN
+    def __init__(self, in_ch, out_ch, latent_dim, upsample_mode='bilinear', **kwargs):
+        self.upsample = nn.Upsample(scale_factor=2, mode=upsample_mode, align_corners=False)
+
+        self.conv1 = EqualizedConvBlock(in_ch, out_ch, kernel_size=kwargs['kernel-size'], activation=kwargs['activation'], **kwargs)
+        self.noise1 = NoiseLayer(num_channels=out_ch)
+        self.style_transfer1 = StyleMod(latent_dim, out_ch)
+
+        self.conv2 = EqualizedConvBlock(out_ch, out_ch, kernel_size=kwargs['kernel-size'], activation=kwargs['activation'], **kwargs)
+        self.noise2 = NoiseLayer(num_channels=out_ch)
+        self.style_transfer2 = StyleMod(latent_dim, out_ch)
+
+    def forward(self, img, latent_vector):
+        img = self.upsample(img)
+        img = self.conv1(img)
+        img = self.noise1(img)
+
+        # Instance normalization
+        img = self.instance_norm(img)
+
+        img = self.style_transfer1(img, latent_vector)
+
+        img = self.conv2(img)
+        img = self.noise2(img)
+
+        # Instance normalization
+        img = self.instance_norm(img)
+
+        img = self.style_transfer2(img, latent_vector)
+
+        return img
+
+    def instance_norm(self, img):
+        mean = torch.mean(img, dim=1, keepdim=True)
+        std = torch.std(img, dim=1, keepdim=True)
+
+        return (img - mean)/std
+
+
+class EqualizedConvBlock(nn.Module):
+    def __init__(self, in_ch, out_ch, kernel_size=3, activation='l-relu', **kwargs):
+        self.conv1 = EqualizedConv2dLayer(in_ch, out_ch, kernel_size, padding=kwargs['padding'], padding_mode=kwargs['p-mode'], stride=kwargs['stride'], gain=kwargs['gain'])
+        self.conv2 = EqualizedConv2dLayer(out_ch, out_ch, kernel_size, padding=kwargs['padding'], padding_mode=kwargs['p-mode'], stride=kwargs['stride'], gain=kwargs['gain'])
+        if activation == 'l-relu':
+            self.act1 = nn.LeakyReLU(negative_slope=kwargs['l-relu-slope'])
+            self.act2 = nn.LeakyReLU(negative_slope=kwargs['l-relu-slope'])
+        
+        if activation == 'relu':
+            self.act1 = nn.ReLU()
+            self.act2 = nn.ReLU()
+
+        self.use_pixel_norm = kwargs['use-pn']
+        self.epsilong = kwargs['epsilon']
+
+    def forward(self, x):
+        x = self.act1(self.conv1(x))
+        x = self.pixel_norm(x) if self.use_pixel_norm else x
+        x = self.act2(self.conv2(x))
+        x = self.pixel_norm(x) if self.use_pixel_norm else x
+
+        return x
+
+    def pixel_norm(self, img):
+        return img / torch.sqrt(torch.mean(img ** 2, dim=1, keepdim=True) + self.epsilon)
+
