@@ -31,8 +31,10 @@ class Generator(nn.Module):
         self.latent_dim = latent_dim
 
         keyword_args = self._form_keyword_args()
+        temp_kw_args = {'padding': 0, 'p-mode': None, 'stride': 1, 'gain': 2**0.5}
 
         self.initial = InitialGBlock(self.start_size, self.channels[0], self.channels[0], self.latent_dim, **keyword_args)
+        self.initial_rgb = EqualizedConvBlock(in_ch=self.channels[0], out_ch=img_channels, kernel_size=1, activation='l-relu', **temp_kw_args)
 
         synthesis_blocks = []
         self.rgb_layers = []
@@ -40,15 +42,38 @@ class Generator(nn.Module):
             # - 2 because one is an initial block and idx + 2
             block = SynthesisBlock(in_ch=self.channels[idx+1], out_ch=self.channels[idx+2], latent_dim=self.latent_dim, upsample_mode='bilinear' **keyword_args)
             synthesis_blocks.append(block)
-            temp_kw_args = {'padding': 0, 'p-mode': None, 'stride': 1, 'gain': 2**0.5}
             self.rgb_layers.append(EqualizedConvBlock(in_ch=self.channels[idx+1], out_ch=img_channels, kernel_size=1, activation='l-relu', **temp_kw_args))
 
         self.synthesis_net = nn.ModuleList(synthesis_blocks)
 
-    def fade_in(self, alpha, upscaled_img, old_net_img):
-        return alpha * upscaled_img + (1 - alpha) * old_net_img
+    def forward(self, latent_vector, alpha, steps):
+
+        assert steps <= len(self.synthesis_net), 'Number of steps can\'t be more than the number of blocks available'
+
+        image = self.initial(latent_vector)
+        if steps == 0: return self.initial_rgb(image)
+
+        curr_rgb = self.initial_rgb(image)
+        prev_rgb = None
+        for idx in range(steps):
+            image = self.synthesis_net[idx](image, latent_vector)
+            prev_rgb = curr_rgb
+            curr_rgb = self.rgb_layers[idx](image)
+
+        prev_rgb_upsampled = self.upsample(prev_rgb, upsample_mode='bilinear')
+
+        return self.fade_in(alpha, curr_rgb, prev_rgb_upsampled)
+        
+
+    def upsample(self, image, upsample_mode):
+        return nn.Upsample(scale_factor=2, mode=upsample_mode, align_corners=False)(image)
+
+    def fade_in(self, alpha, fading_in_img, existent_block_img):
+        return alpha * fading_in_img + (1 - alpha) * existent_block_img
 
     
     def _form_keyword_args(self):
-        pass
+        return {'padding': 1, 'p-mode': 'zeros', 'stride': 1, 'gain': 2**0.5, 
+        'l-relu-slope': 0.2, 'activation': 'l-relu', 'use-pn': True, 
+        'epsilon': 1e-8, 'kernel-size': 3}
         
