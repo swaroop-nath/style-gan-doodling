@@ -26,8 +26,6 @@ def cycle(iterable):
 
 class Trainer:
     def __init__(self, data_dir, results_dir, models_dir, img_size, batch_size, grad_acc_every, alpha_update_every, **kwargs):
-        assert alpha_update_every < grad_acc_every, 'Alpha should be updated atleast once in a batch'
-
         self.data_dir = data_dir
         self.results_dir = Path(results_dir)
         self.models_dir = Path(models_dir)
@@ -88,11 +86,9 @@ class Trainer:
         self.gen_opt.zero_grad()
 
         for batch_iter in range(self.grad_acc_every):
-            # TODO: Get the data
             image_batch, image_cond_batch, part_only_batch = [item.cuda() for item in next(self.loader_D)]
             image_partial_batch = image_cond_batch[:, -1:, :, :]
 
-            # TODO: Update the forward call to the mapping network
             latent_vector, cond_feat_maps = self.map_net(image_cond_batch)
             gen_imgs = self.gen(latent_vector, alpha, steps, cond_feature_maps=cond_feat_maps) # steps will be updated in the wrapper function based on the returned value of alpha
 
@@ -116,22 +112,35 @@ class Trainer:
             critic_loss = critic_loss / self.grad_acc_every
             critic_loss.backward()
 
+        self.critic_opt.step()
+
+        for batch_iter in range(self.grad_acc_every):
+            image_batch, image_cond_batch, part_only_batch = [item.cuda() for item in next(self.loader_D)]
+            image_partial_batch = image_cond_batch[:, -1:, :, :]
+
+            latent_vector, cond_feat_maps = self.map_net(image_cond_batch)
+            gen_imgs = self.gen(latent_vector, alpha, steps, cond_feature_maps=cond_feat_maps) # steps will be updated in the wrapper function based on the returned value of alpha
+
+            image_batch = self.downsample(image_batch, to_size=gen_imgs.size(-1))
+            image_cond_batch = self.downsample(image_cond_batch, to_size=gen_imgs.size(-1))
+            part_only_batch = self.downsample(part_only_batch, to_size=gen_imgs.size(-1))
+            image_partial_batch = self.downsample(image_partial_batch, to_size=gen_imgs.size(-1))
+
+            gen_imgs_add = torch.max(gen_imgs, image_partial_batch)
+
+            generated_image_stack_batch = torch.cat([image_cond_batch[:, :self.partid], torch.max(gen_imgs, image_cond_batch[:, self.partid:self.partid+1]),
+                                                    image_cond_batch[:, self.partid+1:-1], gen_imgs_add], 1)
+
             gen_fake_proba = self.critic(generated_image_stack_batch, alpha, steps)
             gen_loss = self.gen_loss(gen_fake_proba, gen_imgs, part_only_batch, use_sparsity_loss=self.kwargs['use-sparsity-loss'], sparsity_loss_imp=self.kwargs['sparsity-loss-imp'])
             gen_loss = gen_loss / self.grad_acc_every
             gen_loss.backward()
 
-            if batch_iter % self.alpha_update_every == 0 and batch_iter > 0:
-                # Update alpha
-                alpha = alpha + self.kwargs['alpha-inc']
-                alpha = min(alpha, 1)
-
-        self.critic_opt.step()
         self.gen_opt.step()
 
         self.train_step_counter += 1
 
-        return alpha, {'gen-loss': gen_loss, 'critic-loss': critic_loss}
+        return {'gen-loss': gen_loss, 'critic-loss': critic_loss}
 
     def critic_loss(self, fake_proba, real_proba):
         # proba shape == (batch_size, 1) - the final dimension gives prob of reality
@@ -149,12 +158,12 @@ class Trainer:
 
         return gen_loss
 
-    def print_log(self, train_iter, loss_dict):
+    def print_log(self, train_iter, loss_dict, state_dict):
         base_dir = self.results_dir / '{}/'.format(self.model_name)
         if not os.path.exists(base_dir): os.makedirs(base_dir)
 
         with open(self.results_dir / '{}/loss.log'.format(self.model_name), 'a') as file:
-            file.write('Iteration: {} - Generator loss: {} | Discriminator loss: {}\n'.format(train_iter, loss_dict['gen-loss'], loss_dict['critic-loss']))
+            file.write('Iteration: {} - Generator loss: {}\t| Discriminator loss: {}\t| Alpha: {}\t|Steps: {}\n'.format(train_iter, loss_dict['gen-loss'], loss_dict['critic-loss'], state_dict['alpha'], state_dict['steps']))
 
     def train(self):
         self.init_critic()
@@ -171,7 +180,12 @@ class Trainer:
         assert alpha_one_till <= 50, 'Fade in shouldn\'t be separated by more than 50 batches'
         alpha_one_ctr = 0
         for train_iter in tqdm(range(self.kwargs['num-train-steps'] - self.grad_acc_every), desc='Training on samples'):
-            alpha, loss_dict = self.train_step(alpha, steps)
+            loss_dict = self.train_step(alpha, steps)
+
+            if train_iter % self.alpha_update_every == 0 and train_iter > 0:
+                # Update alpha
+                alpha = alpha + self.kwargs['alpha-inc']
+                alpha = min(alpha, 1)
 
             if alpha == 1:
                 alpha_one_ctr += 1
@@ -194,7 +208,7 @@ class Trainer:
                 model_num += 1
 
             if train_iter % 50 == 0:
-                self.print_log(train_iter, loss_dict)
+                self.print_log(train_iter, loss_dict, {'alpha': alpha, 'steps': steps})
 
         # save generator mapping net
         map_net_base_dir = self.models_dir / 'map_net/{}'.format(self.model_name)
