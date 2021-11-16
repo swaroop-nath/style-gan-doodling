@@ -32,7 +32,6 @@ class Discriminator(nn.Module):
 
     def forward(self, img, alpha, steps):
         # 1. steps == 0: means only the final block, 1 means 8 x 8 -> 4 x 4 and so on
-
         if steps == 0:
             img = self.rgb_layers[-1](img)
             img = self.minibatch_std(img)
@@ -47,18 +46,9 @@ class Discriminator(nn.Module):
 
         img = self.fade_in(alpha, low_res_img_from_new_block, low_res_img)
 
-        # for idx in range(1, steps):
-        #     img = self.disc_net[idx](img)
-        #     img = self.downsample(img)
-
         for idx in range(-steps+1, 0):
             img = self.disc_net[idx](img)
             img = self.downsample(img, self.keyword_args['downsample-kernel-size'], self.keyword_args['downsample-stride'])
-
-        # for idx in range(1, steps):
-        #     print(-idx)
-        #     img = self.disc_net[-idx](img)
-        #     img = self.downsample(img, self.keyword_args['downsample-kernel-size'], self.keyword_args['downsample-stride'])
 
         img = self.minibatch_std(img)
         return self.final(img)
