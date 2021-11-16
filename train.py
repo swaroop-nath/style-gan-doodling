@@ -172,6 +172,8 @@ if __name__ == "__main__":
     parser.add_argument('--introduce_layer_after', type=int, default=8)
 
     args = parser.parse_args()
+    print(args)
+    exit(1)
 
     kwargs = {'img-channels': args['image_channels'], 'latent-dim': args['latent_dim'], 'lr-g': args['learning_rate_G'],
             'lr-d': args['learning_rate_D'], 'large-augmentation': args['large_aug'], 'use-sparsity-loss': args['use_sparsity_loss'],
