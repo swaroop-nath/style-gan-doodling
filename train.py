@@ -8,6 +8,9 @@ from discriminator import Discriminator
 from generator import Generator, MappingNetwork
 from tqdm import tqdm
 import argparse
+import torch.nn as nn
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 COLORS_BIRD = {'initial':1-torch.cuda.FloatTensor([45, 169, 145]).view(1, -1, 1, 1)/255., 'eye':1-torch.cuda.FloatTensor([243, 156, 18]).view(1, -1, 1, 1)/255., 'none':1-torch.cuda.FloatTensor([149, 165, 166]).view(1, -1, 1, 1)/255., 
         'beak':1-torch.cuda.FloatTensor([211, 84, 0]).view(1, -1, 1, 1)/255., 'body':1-torch.cuda.FloatTensor([41, 128, 185]).view(1, -1, 1, 1)/255., 'details':1-torch.cuda.FloatTensor([171, 190, 191]).view(1, -1, 1, 1)/255.,
@@ -40,23 +43,28 @@ class Trainer:
         self.color = 1-torch.cuda.FloatTensor([0, 0, 0]).view(1, -1, 1, 1)
         self.default_color = 1-torch.cuda.FloatTensor([0, 0, 0]).view(1, -1, 1, 1)
         for key in COLORS:
-            if key in self.name:
+            if key in self.model_name:
                 self.color = COLORS[key]
                 break
 
         for partname in self.part_to_id.keys():
-            if partname in self.name:
+            if partname in self.model_name:
                 self.partid = self.part_to_id[partname]
                 self.partname = partname
 
     def init_gen(self):
         self.map_net = MappingNetwork(in_size=self.img_size, in_ch=self.kwargs['img-channels'], latent_dim=self.kwargs['latent-dim'])
         self.gen = Generator(self.img_size, self.kwargs['latent-dim'], reversed(self.map_net.channels), img_channels=1, concat_map=True)
+        if torch.cuda.is_available():
+            self.map_net.cuda()
+            self.gen.cuda()
+
         gen_params = list(self.map_net.parameters()) + list(self.gen.parameters())
         self.gen_opt = Adam(gen_params, lr=self.kwargs['lr-g'], betas=(0., 0.99))
 
     def init_critic(self):
         self.critic = Discriminator(self.img_size, img_channels=self.kwargs['img-channels'])
+        if torch.cuda.is_available(): self.critic.cuda()
         self.critic_opt = Adam(self.critic.parameters(), lr=self.kwargs['lr-d'], betas=(0., 0.99))
 
     def set_data_src(self):
@@ -67,6 +75,12 @@ class Trainer:
         self.dataset_G = Dataset_JSON(data_dir, self.img_size, large_aug=large_aug)
         self.loader_D = cycle(data.DataLoader(self.dataset_D, num_workers = int(num_cores/2), batch_size = self.batch_size, drop_last = True, shuffle=True, pin_memory=True))
         self.loader_G = cycle(data.DataLoader(self.dataset_G, num_workers = int(num_cores/2), batch_size = self.batch_size, drop_last = True, shuffle=True, pin_memory=True))
+
+    def downsample(self, img, to_size):
+        pooler = nn.AvgPool2d(kernel_size=2, stride=2)
+        while img.size(-1) != to_size:
+            img = pooler(img)
+        return img
 
     def train_step(self, alpha, steps):
         self.critic_opt.zero_grad()
@@ -80,6 +94,12 @@ class Trainer:
             # TODO: Update the forward call to the mapping network
             latent_vector, cond_feat_maps = self.map_net(image_cond_batch)
             gen_imgs = self.gen(latent_vector, alpha, steps, cond_feature_maps=cond_feat_maps) # steps will be updated in the wrapper function based on the returned value of alpha
+
+            image_batch = self.downsample(image_batch, to_size=gen_imgs.size(-1))
+            image_cond_batch = self.downsample(image_cond_batch, to_size=gen_imgs.size(-1))
+            part_only_batch = self.downsample(part_only_batch, to_size=gen_imgs.size(-1))
+            image_partial_batch = self.downsample(image_partial_batch, to_size=gen_imgs.size(-1))
+
             gen_imgs_add = torch.max(gen_imgs, image_partial_batch)
 
             generated_image_stack_batch = torch.cat([image_cond_batch[:, :self.partid], torch.max(gen_imgs, image_cond_batch[:, self.partid:self.partid+1]),
@@ -89,7 +109,7 @@ class Trainer:
             real_image_stack_batch = torch.cat([image_cond_batch[:, :self.partid], torch.max(part_only_batch, image_cond_batch[:, self.partid:self.partid+1]),
                                                         image_cond_batch[:, self.partid+1:-1], image_batch], 1)
             real_image_stack_batch.requires_grad_()
-            real_proba = self.critic(real_image_stack_batch)
+            real_proba = self.critic(real_image_stack_batch, alpha, steps)
             
             critic_loss = self.critic_loss(fake_proba, real_proba)
             critic_loss = critic_loss / self.grad_acc_every
@@ -129,7 +149,7 @@ class Trainer:
         return gen_loss
 
     def print_log(self, train_iter, loss_dict):
-        with open(self.results_dir + '/loss.log', 'a') as file:
+        with open(self.results_dir + '/{self.model_name}/loss.log', 'a') as file:
             file.write('Iteration: {} - Generator loss: {} | Discriminator loss: {}\n'.format(train_iter, loss_dict['gen-loss'], loss_dict['critic-loss']))
 
     def train(self):

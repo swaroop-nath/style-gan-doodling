@@ -2,16 +2,18 @@ import torch.nn.functional as F
 import torch.nn as nn
 import torch
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 class EqualizedConv2dLayer(nn.Module):
     def __init__(self, in_ch, out_ch, kernel_size=3, padding=1, padding_mode='zeros', stride=1, **kwargs):
         super().__init__()
         factor = in_ch * (kernel_size ** 2)
         self.he_scaler = he_init_scale(factor, kwargs['gain'])
 
-        if padding_mode is not None: self.conv = nn.Conv2d(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel_size, padding=padding, padding_mode=padding_mode, stride=stride)
-        else: self.conv = nn.Conv2d(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel_size, padding=padding, stride=stride)
+        if padding_mode is not None: self.conv = nn.Conv2d(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel_size, padding=padding, padding_mode=padding_mode, stride=stride).to(device)
+        else: self.conv = nn.Conv2d(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel_size, padding=padding, stride=stride).to(device)
         self.conv.bias = None
-        self.bias = nn.Parameter(torch.zeros(out_ch))
+        self.bias = nn.Parameter(torch.zeros(out_ch)).to(device)
 
     def forward(self, x):
         # x - img of shape (channels, width, height)
@@ -20,10 +22,10 @@ class EqualizedConv2dLayer(nn.Module):
 class NoiseLayer(nn.Module):
     def __init__(self, num_channels):
         super().__init__()
-        self.weights = nn.Parameter(torch.zeros(num_channels)) # weights are different for each channel
+        self.weights = nn.Parameter(torch.zeros(num_channels)).to(device) # weights are different for each channel
 
     def forward(self, img):
-        noise = torch.randn(1, 1, img.size(2), img.size(3)) # noise across channels is constant
+        noise = torch.randn(1, 1, img.size(2), img.size(3)).to(device) # noise across channels is constant
         return img + self.weights.view(1, -1, 1, 1) * noise
 
 class StyleMod(nn.Module):
@@ -52,5 +54,3 @@ class EqualizedLinearLayer(nn.Module):
 
 def he_init_scale(factor, gain=2**0.5):
     return gain * (factor ** (-0.5))
-
-
