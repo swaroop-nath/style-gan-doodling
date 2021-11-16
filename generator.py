@@ -5,20 +5,6 @@ from blocks import EqualizedConvBlock, InitialGBlock, SynthesisBlock
 import numpy as np
 from custom_layers import EqualizedConv2dLayer, EqualizedLinearLayer
 
-# class MappingNetwork(nn.Module):
-#     def __init__(self, latent_dim, num_layers=8):
-#         super().__init__()
-#         layers = []
-#         for i in range(num_layers):
-#             layer = EqualizedLinearLayer(latent_dim, latent_dim)
-#             layers.append(('mapping_dense_{}'.format(i), layer))
-
-#         self.map_net = nn.Sequential(OrderedDict(layers))
-
-#     def forward(self, z):
-#         w = self.map_net(z)
-#         return w
-
 class MappingNetwork(nn.Module):
     def __init__(self, in_size, in_ch, latent_dim):
         super().__init__()

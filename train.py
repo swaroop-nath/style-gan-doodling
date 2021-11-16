@@ -6,8 +6,13 @@ import multiprocessing
 from pathlib import Path
 from discriminator import Discriminator
 from generator import Generator, MappingNetwork
-import tqdm
+from tqdm import tqdm
 import argparse
+
+COLORS_BIRD = {'initial':1-torch.cuda.FloatTensor([45, 169, 145]).view(1, -1, 1, 1)/255., 'eye':1-torch.cuda.FloatTensor([243, 156, 18]).view(1, -1, 1, 1)/255., 'none':1-torch.cuda.FloatTensor([149, 165, 166]).view(1, -1, 1, 1)/255., 
+        'beak':1-torch.cuda.FloatTensor([211, 84, 0]).view(1, -1, 1, 1)/255., 'body':1-torch.cuda.FloatTensor([41, 128, 185]).view(1, -1, 1, 1)/255., 'details':1-torch.cuda.FloatTensor([171, 190, 191]).view(1, -1, 1, 1)/255.,
+        'head':1-torch.cuda.FloatTensor([192, 57, 43]).view(1, -1, 1, 1)/255., 'legs':1-torch.cuda.FloatTensor([142, 68, 173]).view(1, -1, 1, 1)/255., 'mouth':1-torch.cuda.FloatTensor([39, 174, 96]).view(1, -1, 1, 1)/255., 
+        'tail':1-torch.cuda.FloatTensor([69, 85, 101]).view(1, -1, 1, 1)/255., 'wings':1-torch.cuda.FloatTensor([127, 140, 141]).view(1, -1, 1, 1)/255.}
 
 def cycle(iterable):
     while True:
@@ -30,9 +35,23 @@ class Trainer:
         self.train_step_counter = 0
         self.model_name = kwargs['model-name']
 
+        self.part_to_id = {'initial': 0, 'eye': 1, 'head': 4, 'body': 3, 'beak': 2, 'legs': 5, 'wings': 8, 'mouth': 6, 'tail': 7}
+        COLORS = COLORS_BIRD
+        self.color = 1-torch.cuda.FloatTensor([0, 0, 0]).view(1, -1, 1, 1)
+        self.default_color = 1-torch.cuda.FloatTensor([0, 0, 0]).view(1, -1, 1, 1)
+        for key in COLORS:
+            if key in self.name:
+                self.color = COLORS[key]
+                break
+
+        for partname in self.part_to_id.keys():
+            if partname in self.name:
+                self.partid = self.part_to_id[partname]
+                self.partname = partname
+
     def init_gen(self):
         self.map_net = MappingNetwork(in_size=self.img_size, in_ch=self.kwargs['img-channels'], latent_dim=self.kwargs['latent-dim'])
-        self.gen = Generator(self.img_size, self.kwargs['latent-dim'], reversed(self.map_net.channels), img_channels=self.kwargs['img-channels'], concat_map=True)
+        self.gen = Generator(self.img_size, self.kwargs['latent-dim'], reversed(self.map_net.channels), img_channels=1, concat_map=True)
         gen_params = list(self.map_net.parameters()) + list(self.gen.parameters())
         self.gen_opt = Adam(gen_params, lr=self.kwargs['lr-g'], betas=(0., 0.99))
 
@@ -56,13 +75,17 @@ class Trainer:
         for _ in range(self.grad_acc_every):
             # TODO: Get the data
             image_batch, image_cond_batch, part_only_batch = [item.cuda() for item in next(self.loader_D)]
+            image_partial_batch = image_cond_batch[:, -1:, :, :]
 
-            z_latent = torch.randn(self.batch_size, self.kwargs['latent-dim'])
             # TODO: Update the forward call to the mapping network
-            latent_vector = self.map_net(z_latent)
-            gen_imgs = self.gen(latent_vector, alpha, steps) # steps will be updated in the wrapper function based on the returned value of alpha
+            latent_vector, cond_feat_maps = self.map_net(image_cond_batch)
+            gen_imgs = self.gen(latent_vector, alpha, steps, cond_feature_maps=cond_feat_maps) # steps will be updated in the wrapper function based on the returned value of alpha
+            gen_imgs_add = torch.max(gen_imgs, image_partial_batch)
 
-            fake_proba = self.critic(gen_imgs.clone().detach(), alpha, steps)
+            generated_image_stack_batch = torch.cat([image_cond_batch[:, :self.partid], torch.max(gen_imgs, image_cond_batch[:, self.partid:self.partid+1]),
+                                                    image_cond_batch[:, self.partid+1:-1], gen_imgs_add], 1)
+
+            fake_proba = self.critic(generated_image_stack_batch.clone().detach(), alpha, steps)
             real_image_stack_batch = torch.cat([image_cond_batch[:, :self.partid], torch.max(part_only_batch, image_cond_batch[:, self.partid:self.partid+1]),
                                                         image_cond_batch[:, self.partid+1:-1], image_batch], 1)
             real_image_stack_batch.requires_grad_()
@@ -72,7 +95,7 @@ class Trainer:
             critic_loss = critic_loss / self.grad_acc_every
             critic_loss.backward()
 
-            gen_fake_proba = self.critic(gen_imgs, alpha, steps)
+            gen_fake_proba = self.critic(generated_image_stack_batch, alpha, steps)
             gen_loss = self.gen_loss(gen_fake_proba, gen_imgs, part_only_batch, use_sparsity_loss=self.kwargs['use-sparsity-loss'], sparsity_loss_imp=self.kwargs['sparsity-loss-imp'])
             gen_loss = gen_loss / self.grad_acc_every
             gen_loss.backward()
@@ -172,21 +195,21 @@ if __name__ == "__main__":
     parser.add_argument('--introduce_layer_after', type=int, default=8)
 
     args = parser.parse_args()
-    print(args)
-    exit(1)
 
-    kwargs = {'img-channels': args['image_channels'], 'latent-dim': args['latent_dim'], 'lr-g': args['learning_rate_G'],
-            'lr-d': args['learning_rate_D'], 'large-augmentation': args['large_aug'], 'use-sparsity-loss': args['use_sparsity_loss'],
-            'sparsity-loss-imp': args['sparsity_loss_imp'], 'alpha-inc': args['alpha_inc'], 'introduce-layer-after': args['introduce_layer_after'],
-            'num-train-steps': args['num_train_steps'], 'save-every': args['save_every'], 'model-name': args['model_name']}
+    kwargs = {'img-channels': args.image_channels, 'latent-dim': args.latent_dim, 'lr-g': args.learning_rate_G,
+            'lr-d': args.learning_rate_D, 'large-augmentation': args.large_aug, 'use-sparsity-loss': args.use_sparsity_loss,
+            'sparsity-loss-imp': args.sparsity_loss_imp, 'alpha-inc': args.alpha_inc, 'introduce-layer-after': args.introduce_layer_after,
+            'num-train-steps': args.num_train_steps, 'save-every': args.save_every, 'model-name': args.model_name}
 
     trainer = Trainer(
-        data_dir=args['data_dir'],
-        results_dir=args['results_dir'],
-        models_dir=args['models_dir'],
-        img_size=args['image_size'],
-        batch_size=args['batch_size'],
-        grad_acc_every=args['grad_acc_every'],
-        alpha_update_every=args['alpha_update_every'],
+        data_dir=args.data_dir,
+        results_dir=args.results_dir,
+        models_dir=args.models_dir,
+        img_size=args.image_size,
+        batch_size=args.batch_size,
+        grad_acc_every=args.grad_acc_every,
+        alpha_update_every=args.alpha_update_every,
         **kwargs
     )
+
+    trainer.train()
