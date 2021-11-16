@@ -175,7 +175,7 @@ class Trainer:
 
         alpha = init_alpha
         steps = 0
-        max_steps = int(np.log2(self.img_size)/4) # init_img_size = 4
+        max_steps = int(np.log2(self.img_size/4)) # init_img_size = 4
         alpha_one_till = self.kwargs['introduce-layer-after']
         assert alpha_one_till <= 50, 'Fade in shouldn\'t be separated by more than 50 batches'
         alpha_one_ctr = 0
@@ -192,6 +192,7 @@ class Trainer:
     
             if alpha_one_ctr == alpha_one_till:
                 alpha = init_alpha
+                alpha_one_ctr = 0
                 steps += 1
                 steps = min(max_steps, steps)
 
