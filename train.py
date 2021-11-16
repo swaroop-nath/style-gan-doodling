@@ -9,6 +9,7 @@ from generator import Generator, MappingNetwork
 from tqdm import tqdm
 import argparse
 import torch.nn as nn
+import os
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -149,7 +150,10 @@ class Trainer:
         return gen_loss
 
     def print_log(self, train_iter, loss_dict):
-        with open(self.results_dir + '/{self.model_name}/loss.log', 'a') as file:
+        base_dir = self.results_dir / '{}/'.format(self.model_name)
+        if not os.path.exists(base_dir): os.makedirs(base_dir)
+
+        with open(self.results_dir / '{}/loss.log'.format(self.model_name), 'a') as file:
             file.write('Iteration: {} - Generator loss: {} | Discriminator loss: {}\n'.format(train_iter, loss_dict['gen-loss'], loss_dict['critic-loss']))
 
     def train(self):
@@ -176,20 +180,34 @@ class Trainer:
                 alpha = init_alpha
                 steps += 1
 
-        if train_iter % self.kwargs['save-every']:
-            # save generator mapping net
-            map_net_path = self.models_dir + '/map_net/{self.model_name}/model_{model_num}.pt'
-            self.save_model(self.map_net, map_net_path)
-            # save generator
-            gen_path = self.models_dir + '/generator/{self.model_name}/model_{model_num}.pt'
-            self.save_model(self.gen, gen_path)
+            if train_iter % self.kwargs['save-every'] == 0 and train_iter > 0:
+                # save generator mapping net
+                map_net_base_dir = self.models_dir / 'map_net/{}'.format(self.model_name)
+                map_net_path = self.models_dir / 'map_net/{}/model_{}.pt'.format(self.model_name, model_num)
+                self.save_model(self.map_net, map_net_path, map_net_base_dir)
+                # save generator
+                gen_base_dir = self.models_dir / 'generator/{}'.format(self.model_name)
+                gen_path = self.models_dir / 'generator/{}/model_{}.pt'.format(self.model_name, model_num)
+                self.save_model(self.gen, gen_path, gen_base_dir)
 
-            model_num += 1
+                model_num += 1
 
-        if train_iter % 50 == 0:
-            self.print_log(train_iter, loss_dict)
+            if train_iter % 50 == 0:
+                self.print_log(train_iter, loss_dict)
 
-    def save_model(model, path):
+        # save generator mapping net
+        map_net_base_dir = self.models_dir / 'map_net/{}'.format(self.model_name)
+        map_net_path = self.models_dir / 'map_net/{}/model_{}.pt'.format(self.model_name, model_num)
+        self.save_model(self.map_net, map_net_path, map_net_base_dir)
+        # save generator
+        gen_base_dir = self.models_dir / 'generator/{}'.format(self.model_name)
+        gen_path = self.models_dir / 'generator/{}/model_{}.pt'.format(self.model_name, model_num)
+        self.save_model(self.gen, gen_path, gen_base_dir)
+
+        self.print_log(train_iter, loss_dict)
+
+    def save_model(self, model, path, base_dir):
+        if not os.path.exists(base_dir): os.makedirs(base_dir)
         torch.save(model.state_dict(), path)
 
 if __name__ == "__main__":
