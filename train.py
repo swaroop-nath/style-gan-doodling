@@ -15,6 +15,9 @@ def cycle(iterable):
 
 class Trainer:
     def __init__(self, data_dir, results_dir, models_dir, img_size, batch_size, grad_acc_every, alpha_update_every, **kwargs):
+        assert alpha_update_every < grad_acc_every, 'Alpha should be updated atleast once in a batch'
+        assert alpha_update_every <= 10, 'Alpha should be updated atleast once in 10 steps'
+
         self.data_dir = data_dir
         self.results_dir = Path(results_dir)
         self.models_dir = Path(models_dir)
@@ -85,7 +88,7 @@ class Trainer:
 
         self.train_step_counter += 1
 
-        return alpha
+        return alpha, {'gen-loss': gen_loss, 'critic_loss': critic_loss}
 
     def critic_loss(self, fake_proba, real_proba):
         # proba shape == (batch_size, 1) - the final dimension gives prob of reality
@@ -103,12 +106,46 @@ class Trainer:
 
         return gen_loss
 
+    def print_log(self, train_iter, loss_dict):
+        with open(self.results_dir + '/loss.log', 'a') as file:
+            file.write('Iteration: {} - Generator loss: {} | Discriminator loss: {}\n'.format(train_iter, loss_dict['gen-loss'], loss_dict['critic-loss']))
+
     def train(self):
         self.init_critic()
         self.init_gen()
         self.set_data_src()
 
-        alpha = 0
+        model_num = 1
+
+        init_alpha = 1e-5
+
+        alpha = init_alpha
         steps = 0
-        for _ in tqdm(range(self.kwargs['num-train-steps'] - self.grad_acc_every), desc='Training on samples'):
-            self.train_step()
+        alpha_one_till = self.kwargs['introduce-layer-after']
+        assert alpha_one_till <= 8, 'Fade in shouldn\'t be separated by more than 8 batches'
+        alpha_one_ctr = 0
+        for train_iter in tqdm(range(self.kwargs['num-train-steps'] - self.grad_acc_every), desc='Training on samples'):
+            alpha, loss_dict = self.train_step(alpha, steps)
+
+            if alpha == 1:
+                alpha_one_ctr += 1
+    
+            if alpha_one_ctr == alpha_one_till:
+                alpha = init_alpha
+                steps += 1
+
+        if train_iter % self.kwargs['save-every']:
+            # save generator mapping net
+            map_net_path = self.models_dir + '/map_net/model_{model_num}.pt'
+            self.save_model(self.map_net, map_net_path)
+            # save generator
+            gen_path = self.models_dir + '/generator/model_{model_num}.pt'
+            self.save_model(self.gen, gen_path)
+
+            model_num += 1
+
+        if train_iter % 50 == 0:
+            self.print_log(train_iter, loss_dict)
+
+    def save_model(model, path):
+        torch.save(model.state_dict(), path)
