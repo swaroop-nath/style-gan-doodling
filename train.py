@@ -10,6 +10,7 @@ from tqdm import tqdm
 import argparse
 import torch.nn as nn
 import os
+import numpy as np
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -26,7 +27,6 @@ def cycle(iterable):
 class Trainer:
     def __init__(self, data_dir, results_dir, models_dir, img_size, batch_size, grad_acc_every, alpha_update_every, **kwargs):
         assert alpha_update_every < grad_acc_every, 'Alpha should be updated atleast once in a batch'
-        assert alpha_update_every <= 10, 'Alpha should be updated atleast once in 10 steps'
 
         self.data_dir = data_dir
         self.results_dir = Path(results_dir)
@@ -87,7 +87,7 @@ class Trainer:
         self.critic_opt.zero_grad()
         self.gen_opt.zero_grad()
 
-        for _ in range(self.grad_acc_every):
+        for batch_iter in range(self.grad_acc_every):
             # TODO: Get the data
             image_batch, image_cond_batch, part_only_batch = [item.cuda() for item in next(self.loader_D)]
             image_partial_batch = image_cond_batch[:, -1:, :, :]
@@ -121,7 +121,7 @@ class Trainer:
             gen_loss = gen_loss / self.grad_acc_every
             gen_loss.backward()
 
-            if _ % self.alpha_update_every == 0:
+            if batch_iter % self.alpha_update_every == 0 and batch_iter > 0:
                 # Update alpha
                 alpha = alpha + self.kwargs['alpha-inc']
                 alpha = min(alpha, 1)
@@ -162,13 +162,13 @@ class Trainer:
         self.set_data_src()
 
         model_num = 1
-
         init_alpha = 1e-5
 
         alpha = init_alpha
         steps = 0
+        max_steps = int(np.log2(self.img_size)/4) # init_img_size = 4
         alpha_one_till = self.kwargs['introduce-layer-after']
-        assert alpha_one_till <= 8, 'Fade in shouldn\'t be separated by more than 8 batches'
+        assert alpha_one_till <= 50, 'Fade in shouldn\'t be separated by more than 50 batches'
         alpha_one_ctr = 0
         for train_iter in tqdm(range(self.kwargs['num-train-steps'] - self.grad_acc_every), desc='Training on samples'):
             alpha, loss_dict = self.train_step(alpha, steps)
@@ -179,6 +179,7 @@ class Trainer:
             if alpha_one_ctr == alpha_one_till:
                 alpha = init_alpha
                 steps += 1
+                steps = min(max_steps, steps)
 
             if train_iter % self.kwargs['save-every'] == 0 and train_iter > 0:
                 # save generator mapping net
