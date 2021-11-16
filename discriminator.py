@@ -12,7 +12,7 @@ class Discriminator(nn.Module):
         self.start_size = 4
         possible_channels = [32, 64, 128, 256, 512]
         num_disc_blocks = int(np.log2(in_size/self.start_size)) + 1
-        self.channels = possible_channels[-num_disc_blocks:]
+        self.channels = possible_channels[:num_disc_blocks]
 
         self.keyword_args = self._form_keyword_args()
         temp_kw_args = {'gain': 2**0.5}
@@ -20,13 +20,13 @@ class Discriminator(nn.Module):
         disc_blocks = []
         self.rgb_layers = []
         for idx in range(num_disc_blocks - 1):
-            self.rgb_layers.append(EqualizedConv2dLayer(in_ch=self.channels[idx], out_ch=img_channels, kernel_size=1, padding=0, padding_mode=None, stride=1, **temp_kw_args))
+            self.rgb_layers.append(EqualizedConv2dLayer(in_ch=img_channels, out_ch=self.channels[idx], kernel_size=1, padding=0, padding_mode=None, stride=1, **temp_kw_args))
             disc_block = EqualizedConvBlock(in_ch=self.channels[idx], out_ch=self.channels[idx+1], kernel_size=self.keyword_args['kernel-size'], **self.keyword_args)
             disc_blocks.append(disc_block)
 
         self.disc_net = nn.ModuleList(disc_blocks)
 
-        final_rgb = EqualizedConv2dLayer(in_ch=self.channels[-1], out_ch=img_channels, kernel_size=1, padding=0, padding_mode=None, stride=1, **temp_kw_args)
+        final_rgb = EqualizedConv2dLayer(in_ch=img_channels, out_ch=self.channels[-1], kernel_size=1, padding=0, padding_mode=None, stride=1, **temp_kw_args)
         self.rgb_layers.append(final_rgb)
         self.final = FinalDBlock(self.start_size, self.channels[-1], self.channels[-1], **self.keyword_args)
 
@@ -38,18 +38,27 @@ class Discriminator(nn.Module):
             img = self.minibatch_std(img)
             return self.final(img)
 
-        high_res_img = self.rgb_layers[0](img)
-        high_res_img = self.disc_net[0](high_res_img)
+        high_res_img = self.rgb_layers[-(steps+1)](img)
+        high_res_img = self.disc_net[-steps](high_res_img)
         low_res_img_from_new_block = self.downsample(high_res_img, self.keyword_args['downsample-kernel-size'], self.keyword_args['downsample-stride'])
 
         downsampled_img = self.downsample(img, self.keyword_args['downsample-kernel-size'], self.keyword_args['downsample-stride'])
-        low_res_img = self.rgb_layers[1](downsampled_img)
+        low_res_img = self.rgb_layers[-steps](downsampled_img)
 
         img = self.fade_in(alpha, low_res_img_from_new_block, low_res_img)
 
-        for idx in range(1, steps):
+        # for idx in range(1, steps):
+        #     img = self.disc_net[idx](img)
+        #     img = self.downsample(img)
+
+        for idx in range(-steps+1, 0):
             img = self.disc_net[idx](img)
-            img = self.downsample(img)
+            img = self.downsample(img, self.keyword_args['downsample-kernel-size'], self.keyword_args['downsample-stride'])
+
+        # for idx in range(1, steps):
+        #     print(-idx)
+        #     img = self.disc_net[-idx](img)
+        #     img = self.downsample(img, self.keyword_args['downsample-kernel-size'], self.keyword_args['downsample-stride'])
 
         img = self.minibatch_std(img)
         return self.final(img)

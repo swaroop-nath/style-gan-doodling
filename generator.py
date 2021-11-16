@@ -39,7 +39,7 @@ class Generator(nn.Module):
         for idx in range(num_synthesis_blocks - 1):
             block = SynthesisBlock(in_ch=self.channels[idx], out_ch=self.channels[idx+1], latent_dim=latent_dim, upsample_mode='bilinear', **keyword_args)
             synthesis_blocks.append(block)
-            self.rgb_layers.append(EqualizedConv2dLayer(in_ch=self.channels[0], out_ch=img_channels, kernel_size=1, padding=0, padding_mode=None, stride=1, **temp_kw_args))
+            self.rgb_layers.append(EqualizedConv2dLayer(in_ch=self.channels[idx+1], out_ch=img_channels, kernel_size=1, padding=0, padding_mode=None, stride=1, **temp_kw_args))
 
         self.synthesis_net = nn.ModuleList(synthesis_blocks)
 

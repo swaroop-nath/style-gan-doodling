@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from custom_layers import EqualizedConv2dLayer, NoiseLayer, StyleMod
+from custom_layers import EqualizedConv2dLayer, EqualizedLinearLayer, NoiseLayer, StyleMod
 
 class InitialGBlock(nn.Module):
     def __init__(self, start_img_size, start_channel, out_ch, latent_dim, **kwargs):
         super().__init__()
-        self.const = nn.Parameter(torch.randn(1, start_img_size, start_img_size, start_channel)) # 1 for batch size
+        self.const = nn.Parameter(torch.randn(1, start_channel, start_img_size, start_img_size)) # const IMG shape - (1, channels, width, height)
         self.noise1 = NoiseLayer(start_channel)
         self.style_transfer1 = StyleMod(latent_dim, start_channel, **kwargs)
         self.conv = EqualizedConvBlock(start_channel, out_ch, kwargs['kernel-size'], **kwargs)
@@ -31,8 +31,9 @@ class InitialGBlock(nn.Module):
         return img
 
     def instance_norm(self, img):
-        mean = torch.mean(img, dim=1, keepdim=True)
-        std = torch.std(img, dim=1, keepdim=True)
+        # IMG shape - (batch, channels, width, height)
+        mean = torch.mean(img, dim=(2, 3), keepdim=True) # Computing mean for each feature map
+        std = torch.std(img, dim=(2, 3), keepdim=True) # Computing std dev for each feature map
 
         return (img - mean)/std
 
@@ -51,14 +52,16 @@ class FinalDBlock(nn.Module):
             self.act1 = nn.ReLU()
             self.act2 = nn.ReLU()
 
-        self.dense = nn.Linear(in_features=end_img_size * end_img_size * out_ch, out_features=1) # Fake or not fake
+        self.dense = EqualizedLinearLayer(in_size=1 * 1 * out_ch, out_size=1, **kwargs) # Fake or not fake
 
     def forward(self, img):
         # Image is already concatenated with minibatch std
         img = self.act1(self.conv1(img))
         img = self.act2(self.conv2(img))
 
-        probs = F.softmax(self.dense(img))
+        img = torch.flatten(img, start_dim=1) # Flattening each img in the batch
+
+        probs = F.softmax(self.dense(img), dim=1) # Compute probs across logits per batch
         return probs
 
 
@@ -118,7 +121,7 @@ class EqualizedConvBlock(nn.Module):
             self.act2 = nn.ReLU()
 
         self.use_pixel_norm = kwargs['use-pn']
-        self.epsilong = kwargs['epsilon']
+        self.epsilon = kwargs['epsilon']
 
     def forward(self, x):
         x = self.act1(self.conv1(x))

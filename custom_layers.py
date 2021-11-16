@@ -14,7 +14,8 @@ class EqualizedConv2dLayer(nn.Module):
         self.bias = nn.Parameter(torch.zeros(out_ch))
 
     def forward(self, x):
-        self.conv(x/self.he_scaler) + self.bias.view(1, self.bias.shape[0], 1, 1)
+        # x - img of shape (channels, width, height)
+        return self.conv(x/self.he_scaler) + self.bias.view(1, self.bias.shape[0], 1, 1)
 
 class NoiseLayer(nn.Module):
     def __init__(self, num_channels):
@@ -22,20 +23,21 @@ class NoiseLayer(nn.Module):
         self.weights = nn.Parameter(torch.zeros(num_channels)) # weights are different for each channel
 
     def forward(self, img):
-        noise = torch.randn(img.size(0), 1, img.size(2), img.size(3)) # noise across channels is constant
-        img += self.weights.view(1, -1, 1, 1) * noise
-        return img
+        noise = torch.randn(1, 1, img.size(2), img.size(3)) # noise across channels is constant
+        return img + self.weights.view(1, -1, 1, 1) * noise
 
 class StyleMod(nn.Module):
-    def __init__(self, latent_dim, channel_size, **kwargs):
+    def __init__(self, latent_dim, channels, **kwargs):
         super().__init__()
-        self.affine_stds = EqualizedLinearLayer(latent_dim, channel_size ** 2, **kwargs)
-        self.affine_biases = EqualizedLinearLayer(latent_dim, channel_size ** 2, **kwargs)
+        self.affine = EqualizedLinearLayer(latent_dim, channels * 2, **kwargs)
 
     def forward(self, img, latent_vector):
-        style_mod_stds = self.affine_stds(latent_vector).view(1, 1, img.size[-2], img.size[-1])
-        style_mod_biases = self.affine_biases(latent_vector).view(1, 1, img.size[-2], img.size[-1])
-        return style_mod_stds * img + style_mod_biases
+        # IMG shape - (batch, channels, width, height)
+        style = self.affine(latent_vector)
+        shape = [-1, 2, img.size(1)] + (img.dim() - 2) * [1] # shape == (batch_size, 2, num_channels, img_width, img_height)
+        style = style.view(shape)
+
+        return img * (style[:, 0] + 1.) + style[:, 1] # Component 1 acts as the modulation and component 2 acts as the bias
 
 class EqualizedLinearLayer(nn.Module):
     def __init__(self, in_size, out_size, **kwargs):
