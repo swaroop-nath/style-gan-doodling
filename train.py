@@ -85,7 +85,7 @@ class Trainer:
         self.critic_opt.zero_grad()
         self.gen_opt.zero_grad()
 
-        for batch_iter in range(self.grad_acc_every):
+        for _ in range(self.grad_acc_every):
             image_batch, image_cond_batch, part_only_batch = [item.cuda() for item in next(self.loader_D)]
             image_partial_batch = image_cond_batch[:, -1:, :, :]
 
@@ -114,8 +114,8 @@ class Trainer:
 
         self.critic_opt.step()
 
-        for batch_iter in range(self.grad_acc_every):
-            image_batch, image_cond_batch, part_only_batch = [item.cuda() for item in next(self.loader_D)]
+        for _ in range(self.grad_acc_every):
+            image_batch, image_cond_batch, part_only_batch = [item.cuda() for item in next(self.loader_G)]
             image_partial_batch = image_cond_batch[:, -1:, :, :]
 
             latent_vector, cond_feat_maps = self.map_net(image_cond_batch)
