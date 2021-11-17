@@ -263,13 +263,17 @@ class Trainer:
 
         partial_rgb = self.to_rgb(image_partial_batch, self.default_color)
         part_rgb = part_rgb = self.to_rgb(part_only_batch, self.color)
+
+        base_dir = self.results_dir / self.model_name / 'part-photos'
+        if not os.path.exists(base_dir): os.makedirs(base_dir)
+
         torchvision.utils.save_image(partial_rgb, str(self.results_dir / self.model_name / 'part-photos' / f'{str(num)}-part.{ext}'), nrow=num_rows)
         torchvision.utils.save_image(part_rgb, str(self.results_dir / self.model_name / 'part-photos' / f'{str(num)}-real.{ext}'), nrow=num_rows)
         torchvision.utils.save_image(1-((1-part_rgb)+(1-partial_rgb).clamp_(0., 1.)), str(self.results_dir / self.model_name / 'part-photos' / f'{str(num)}-full.{ext}'), nrow=num_rows)
 
         generated_part_rgb = self.to_rgb(gen_imgs, self.color)
         torchvision.utils.save_image(generated_part_rgb, str(self.results_dir / self.model_name / 'part-photos' / f'{str(num)}-comp.{ext}'), nrow=num_rows)
-        torchvision.utils.save_image(1-((1-generated_part_rgb)+(1-partial_rgb).clamp_(0., 1.)), str(self.results_dir / 'part-photos' / self.model_name / f'{str(num)}.{ext}'), nrow=num_rows)
+        torchvision.utils.save_image(1-((1-generated_part_rgb)+(1-partial_rgb).clamp_(0., 1.)), str(self.results_dir / self.model_name / 'part-photos' / f'{str(num)}.{ext}'), nrow=num_rows)
 
         self.map_net.train()
         self.gen.eval()
