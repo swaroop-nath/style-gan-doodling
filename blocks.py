@@ -61,8 +61,8 @@ class FinalDBlock(nn.Module):
 
         img = torch.flatten(img, start_dim=1) # Flattening each img in the batch
 
-        probs = F.softmax(self.dense(img), dim=1) # Compute probs across logits per batch
-        return probs
+        logits = self.dense(img) # WGAN works with logits, not probs
+        return logits
 
 
 class SynthesisBlock(nn.Module):

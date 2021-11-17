@@ -1,7 +1,7 @@
 from data_loader import Dataset_JSON
 from torch.utils import data
 import torch
-from torch.optim import Adam
+from torch.optim import Adam, RMSprop
 import multiprocessing
 from pathlib import Path
 from discriminator import Discriminator
@@ -13,6 +13,8 @@ import os
 import numpy as np
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+WEIGHT_CLIP = 0.01 # Based on the original WGAN paper
 
 COLORS_BIRD = {'initial':1-torch.cuda.FloatTensor([45, 169, 145]).view(1, -1, 1, 1)/255., 'eye':1-torch.cuda.FloatTensor([243, 156, 18]).view(1, -1, 1, 1)/255., 'none':1-torch.cuda.FloatTensor([149, 165, 166]).view(1, -1, 1, 1)/255., 
         'beak':1-torch.cuda.FloatTensor([211, 84, 0]).view(1, -1, 1, 1)/255., 'body':1-torch.cuda.FloatTensor([41, 128, 185]).view(1, -1, 1, 1)/255., 'details':1-torch.cuda.FloatTensor([171, 190, 191]).view(1, -1, 1, 1)/255.,
@@ -59,12 +61,12 @@ class Trainer:
             self.gen.cuda()
 
         gen_params = list(self.map_net.parameters()) + list(self.gen.parameters())
-        self.gen_opt = Adam(gen_params, lr=self.kwargs['lr-g'], betas=(0., 0.99))
+        self.gen_opt = RMSprop(gen_params, lr=self.kwargs['lr-g']) # WGAN uses RMSProp
 
     def init_critic(self):
         self.critic = Discriminator(self.img_size, img_channels=self.kwargs['img-channels'])
         if torch.cuda.is_available(): self.critic.cuda()
-        self.critic_opt = Adam(self.critic.parameters(), lr=self.kwargs['lr-d'], betas=(0., 0.99))
+        self.critic_opt = RMSprop(self.critic.parameters(), lr=self.kwargs['lr-d']) # WGAN uses RMSProp
 
     def set_data_src(self):
         data_dir = self.data_dir
@@ -114,6 +116,9 @@ class Trainer:
 
         self.critic_opt.step()
 
+        for p in self.critic.parameters():
+            p.data.clamp_(-WEIGHT_CLIP, WEIGHT_CLIP)
+
         for _ in range(self.grad_acc_every):
             image_batch, image_cond_batch, part_only_batch = [item.cuda() for item in next(self.loader_G)]
             image_partial_batch = image_cond_batch[:, -1:, :, :]
@@ -145,7 +150,7 @@ class Trainer:
     def critic_loss(self, fake_proba, real_proba):
         # proba shape == (batch_size, 1) - the final dimension gives prob of reality
         # Employing Wasserstein loss
-        return -torch.mean(real_proba - fake_proba)
+        return -(torch.mean(real_proba) - torch.mean(fake_proba))
 
     def gen_loss(self, gen_fake_proba, gen_imgs, real_imgs, use_sparsity_loss, sparsity_loss_imp):
         gen_loss = -torch.mean(gen_fake_proba)
