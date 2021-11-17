@@ -275,7 +275,8 @@ class Trainer:
         self.gen.eval()
 
     def to_rgb(self, img, color):
-        pass
+        image_rgb = img.repeat(1, 3, 1, 1)
+        return 1-image_rgb*color
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
