@@ -10,6 +10,7 @@ from generator import Generator, MappingNetwork
 from tqdm import tqdm
 import argparse
 import torch.nn as nn
+import torchvision
 import os
 import numpy as np
 
@@ -161,7 +162,7 @@ class Trainer:
         return (nn.functional.relu(1 + real_proba) + nn.functional.relu(1 - fake_proba)).mean()
 
     def gen_loss(self, gen_fake_proba, gen_imgs, real_imgs, use_sparsity_loss, sparsity_loss_imp):
-        gen_loss = -torch.mean(gen_fake_proba)
+        gen_loss = torch.mean(gen_fake_proba) # Apparently doodlerGAN doesn't use the minus!
         if not use_sparsity_loss: return gen_loss
 
         gen_density = gen_imgs.view(self.batch_size, -1).sum(dim=1)
@@ -224,6 +225,9 @@ class Trainer:
             if train_iter % 50 == 0:
                 self.print_log(train_iter, loss_dict, {'alpha': alpha, 'steps': steps})
 
+            if train_iter % 1000 == 0 or (train_iter%250 == 0 and train_iter < 2500):
+                self.evaluate(train_iter, alpha, steps)
+
         # save generator mapping net
         map_net_base_dir = self.models_dir / 'map_net/{}'.format(self.model_name)
         map_net_path = self.models_dir / 'map_net/{}/model_{}.pt'.format(self.model_name, model_num)
@@ -238,6 +242,40 @@ class Trainer:
     def save_model(self, model, path, base_dir):
         if not os.path.exists(base_dir): os.makedirs(base_dir)
         torch.save(model.state_dict(), path)
+
+    @torch.no_grad()
+    def evaluate(self, num, alpha, steps, num_img_tiles=8):
+        self.gen.eval()
+        self.map_net.eval()
+
+        ext = 'png'
+        num_rows = num_img_tiles
+        image_batch, image_cond_batch, part_only_batch = [item.cuda() for item in self.dataset_G.sample_partial_test(num_rows ** 2)]
+        image_partial_batch = image_cond_batch[:, -1:, :, :]
+
+        latent_vector, cond_feat_maps = self.map_net(image_cond_batch)
+        gen_imgs = self.gen(latent_vector, alpha, steps, cond_feature_maps=cond_feat_maps)
+
+        image_batch = self.downsample(image_batch, to_size=gen_imgs.size(-1))
+        image_cond_batch = self.downsample(image_cond_batch, to_size=gen_imgs.size(-1))
+        part_only_batch = self.downsample(part_only_batch, to_size=gen_imgs.size(-1))
+        image_partial_batch = self.downsample(image_partial_batch, to_size=gen_imgs.size(-1))
+
+        partial_rgb = self.to_rgb(image_partial_batch, self.default_color)
+        part_rgb = part_rgb = self.to_rgb(part_only_batch, self.color)
+        torchvision.utils.save_image(partial_rgb, str(self.results_dir / self.name / f'{str(num)}-part.{ext}'), nrow=num_rows)
+        torchvision.utils.save_image(part_rgb, str(self.results_dir / self.name / f'{str(num)}-real.{ext}'), nrow=num_rows)
+        torchvision.utils.save_image(1-((1-part_rgb)+(1-partial_rgb).clamp_(0., 1.)), str(self.results_dir / self.name / f'{str(num)}-full.{ext}'), nrow=num_rows)
+
+        generated_part_rgb = self.to_rgb(gen_imgs, self.color)
+        torchvision.utils.save_image(generated_part_rgb, str(self.results_dir / self.name / f'{str(num)}-comp.{ext}'), nrow=num_rows)
+        torchvision.utils.save_image(1-((1-generated_part_rgb)+(1-partial_rgb).clamp_(0., 1.)), str(self.results_dir / self.name / f'{str(num)}.{ext}'), nrow=num_rows)
+
+        self.map_net.train()
+        self.gen.eval()
+
+    def to_rgb(self, img, color):
+        pass
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
