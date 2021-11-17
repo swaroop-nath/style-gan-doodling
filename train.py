@@ -82,7 +82,7 @@ class Trainer:
             img = pooler(img)
         return img
 
-    def gradient_penalty(images, output, weight = 10):
+    def gradient_penalty(self, images, output, weight = 10):
         batch_size = images.shape[0]
         gradients = torch_grad(outputs=output, inputs=images,
                             grad_outputs=torch.ones(output.size()).cuda(),
@@ -119,8 +119,8 @@ class Trainer:
             real_proba = self.critic(real_image_stack_batch, alpha, steps)
             
             critic_loss = self.critic_loss(fake_proba, real_proba)
-            gp = self.gradient_penalty(real_image_stack_batch, real_proba)
-            critic_loss = critic_loss + gp
+            # gp = self.gradient_penalty(real_image_stack_batch, real_proba)
+            # critic_loss = critic_loss + gp
             critic_loss = critic_loss / self.grad_acc_every
             critic_loss.backward()
 
@@ -156,8 +156,9 @@ class Trainer:
 
     def critic_loss(self, fake_proba, real_proba):
         # proba shape == (batch_size, 1) - the final dimension gives prob of reality
-        # Employing Wasserstein loss
-        return -(torch.mean(real_proba) - torch.mean(fake_proba))
+        # Employing modified Wasserstein loss
+        # return -(torch.mean(real_proba) - torch.mean(fake_proba))
+        return (nn.functional.relu(1 + real_proba) + nn.functional.relu(1 - fake_proba)).mean()
 
     def gen_loss(self, gen_fake_proba, gen_imgs, real_imgs, use_sparsity_loss, sparsity_loss_imp):
         gen_loss = -torch.mean(gen_fake_proba)
