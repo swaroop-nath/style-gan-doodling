@@ -1,7 +1,8 @@
 from data_loader import Dataset_JSON
 from torch.utils import data
 import torch
-from torch.optim import Adam, RMSprop
+from torch.optim import Adam
+from torch.autograd import grad as torch_grad
 import multiprocessing
 from pathlib import Path
 from discriminator import Discriminator
@@ -13,8 +14,6 @@ import os
 import numpy as np
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-WEIGHT_CLIP = 0.01 # Based on the original WGAN paper
 
 COLORS_BIRD = {'initial':1-torch.cuda.FloatTensor([45, 169, 145]).view(1, -1, 1, 1)/255., 'eye':1-torch.cuda.FloatTensor([243, 156, 18]).view(1, -1, 1, 1)/255., 'none':1-torch.cuda.FloatTensor([149, 165, 166]).view(1, -1, 1, 1)/255., 
         'beak':1-torch.cuda.FloatTensor([211, 84, 0]).view(1, -1, 1, 1)/255., 'body':1-torch.cuda.FloatTensor([41, 128, 185]).view(1, -1, 1, 1)/255., 'details':1-torch.cuda.FloatTensor([171, 190, 191]).view(1, -1, 1, 1)/255.,
@@ -61,12 +60,12 @@ class Trainer:
             self.gen.cuda()
 
         gen_params = list(self.map_net.parameters()) + list(self.gen.parameters())
-        self.gen_opt = RMSprop(gen_params, lr=self.kwargs['lr-g']) # WGAN uses RMSProp
+        self.gen_opt = Adam(gen_params, lr=self.kwargs['lr-g'], betas=(0, 0.9)) # WGAN-gp uses Adam
 
     def init_critic(self):
         self.critic = Discriminator(self.img_size, img_channels=self.kwargs['img-channels'])
         if torch.cuda.is_available(): self.critic.cuda()
-        self.critic_opt = RMSprop(self.critic.parameters(), lr=self.kwargs['lr-d']) # WGAN uses RMSProp
+        self.critic_opt = Adam(self.critic.parameters(), lr=self.kwargs['lr-d'], betas=(0, 0.9)) # WGAN-gp uses Adam
 
     def set_data_src(self):
         data_dir = self.data_dir
@@ -82,6 +81,15 @@ class Trainer:
         while img.size(-1) != to_size:
             img = pooler(img)
         return img
+
+    def gradient_penalty(images, output, weight = 10):
+        batch_size = images.shape[0]
+        gradients = torch_grad(outputs=output, inputs=images,
+                            grad_outputs=torch.ones(output.size()).cuda(),
+                            create_graph=True, retain_graph=True, only_inputs=True)[0]
+
+        gradients = gradients.view(batch_size, -1)
+        return weight * ((gradients.norm(2, dim=1) - 1) ** 2).mean()
 
     def train_step(self, alpha, steps):
         self.critic_opt.zero_grad()
@@ -111,13 +119,12 @@ class Trainer:
             real_proba = self.critic(real_image_stack_batch, alpha, steps)
             
             critic_loss = self.critic_loss(fake_proba, real_proba)
+            gp = self.gradient_penalty(real_image_stack_batch, real_proba)
+            critic_loss = critic_loss + gp
             critic_loss = critic_loss / self.grad_acc_every
             critic_loss.backward()
 
         self.critic_opt.step()
-
-        for p in self.critic.parameters():
-            p.data.clamp_(-WEIGHT_CLIP, WEIGHT_CLIP)
 
         for _ in range(self.grad_acc_every):
             image_batch, image_cond_batch, part_only_batch = [item.cuda() for item in next(self.loader_G)]
@@ -225,7 +232,7 @@ class Trainer:
         gen_path = self.models_dir / 'generator/{}/model_{}.pt'.format(self.model_name, model_num)
         self.save_model(self.gen, gen_path, gen_base_dir)
 
-        self.print_log(train_iter, loss_dict)
+        self.print_log(train_iter, loss_dict, {'alpha': alpha, 'steps': steps})
 
     def save_model(self, model, path, base_dir):
         if not os.path.exists(base_dir): os.makedirs(base_dir)
