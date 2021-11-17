@@ -60,12 +60,12 @@ class Trainer:
             self.gen.cuda()
 
         gen_params = list(self.map_net.parameters()) + list(self.gen.parameters())
-        self.gen_opt = Adam(gen_params, lr=self.kwargs['lr-g'], betas=(0, 0.9)) # WGAN-gp uses Adam
+        self.gen_opt = Adam(gen_params, lr=self.kwargs['lr-g'], betas=(0, 0.99)) # WGAN-gp uses Adam
 
     def init_critic(self):
         self.critic = Discriminator(self.img_size, img_channels=self.kwargs['img-channels'])
         if torch.cuda.is_available(): self.critic.cuda()
-        self.critic_opt = Adam(self.critic.parameters(), lr=self.kwargs['lr-d'], betas=(0, 0.9)) # WGAN-gp uses Adam
+        self.critic_opt = Adam(self.critic.parameters(), lr=self.kwargs['lr-d'], betas=(0, 0.99)) # WGAN-gp uses Adam
 
     def set_data_src(self):
         data_dir = self.data_dir
