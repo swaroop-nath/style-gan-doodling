@@ -109,7 +109,7 @@ class Generator(nn.Module):
 
         prev_rgb_upsampled = self.upsample(prev_rgb, upsample_mode='bilinear')
 
-        return torch.sigmoid(self.fade_in(alpha, curr_rgb, prev_rgb_upsampled)) # Normalizing between -1, 1
+        return torch.tanh(self.fade_in(alpha, curr_rgb, prev_rgb_upsampled)) # Normalizing between -1, 1
         
     def upsample(self, image, upsample_mode):
         return nn.Upsample(scale_factor=2, mode=upsample_mode, align_corners=False)(image)

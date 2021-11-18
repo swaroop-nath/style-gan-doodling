@@ -133,13 +133,13 @@ class Trainer:
             real_image_stack_batch = torch.cat([image_cond_batch[:, :self.partid], torch.max(part_only_batch, image_cond_batch[:, self.partid:self.partid+1]),
                                                         image_cond_batch[:, self.partid+1:-1], image_batch], 1)
 
-            fooling_noise = torch.randn(real_image_stack_batch)/(0.05 * self.train_step_counter + 1)
+            fooling_noise = torch.randn(real_image_stack_batch.size()).to(device)/(0.05 * self.train_step_counter + 1)
             real_image_stack_batch = real_image_stack_batch + fooling_noise
 
             real_image_stack_batch.requires_grad_()
             real_proba = self.critic(real_image_stack_batch, alpha, steps)
             
-            if torch.rand(0) <= flip_p:
+            if torch.rand(1) <= flip_p:
                 critic_loss = self.critic_loss(fake_proba, real_proba)
             else:
                 critic_loss = self.critic_loss(real_proba, fake_proba)
