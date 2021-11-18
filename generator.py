@@ -54,7 +54,7 @@ class StyleVectorizer(nn.Module):
         super().__init__()
 
         layers = []
-        for i in range(depth):
+        for _ in range(depth):
             layers.extend([nn.Linear(emb, emb).to(device), nn.LeakyReLU(p).to(device)])
 
         self.net = nn.Sequential(*layers)
@@ -109,9 +109,8 @@ class Generator(nn.Module):
 
         prev_rgb_upsampled = self.upsample(prev_rgb, upsample_mode='bilinear')
 
-        return self.fade_in(alpha, curr_rgb, prev_rgb_upsampled)
+        return torch.sigmoid(self.fade_in(alpha, curr_rgb, prev_rgb_upsampled)) # Normalizing between -1, 1
         
-
     def upsample(self, image, upsample_mode):
         return nn.Upsample(scale_factor=2, mode=upsample_mode, align_corners=False)(image)
 

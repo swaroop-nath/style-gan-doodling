@@ -69,7 +69,8 @@ class SynthesisBlock(nn.Module):
     # Things to do - upsample, apply conv2d, add noise, apply ADAIN, apply conv2d, add noise and apply ADAIN
     def __init__(self, in_ch, out_ch, latent_dim, upsample_mode='bilinear', **kwargs):
         super().__init__()
-        self.upsample = nn.Upsample(scale_factor=2, mode=upsample_mode, align_corners=False)
+        # self.upsample = nn.Upsample(scale_factor=2, mode=upsample_mode, align_corners=False)
+        self.upsample = nn.PixelShuffle(upscale_factor=2) # Reference - https://github.com/soumith/ganhacks#authors
 
         self.conv1 = EqualizedConvBlock(in_ch, out_ch, kwargs['kernel-size'], **kwargs)
         self.noise1 = NoiseLayer(num_channels=out_ch)

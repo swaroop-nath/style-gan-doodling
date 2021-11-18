@@ -103,7 +103,7 @@ class Trainer:
         tt = int(torch.rand(()).numpy() * layers)
         return self.noise_list(n, tt, latent_dim) + self.noise_list(n, layers - tt, latent_dim) 
 
-    def train_step(self, alpha, steps, use_sep_ln):
+    def train_step(self, alpha, steps, use_sep_ln, flip_p):
         self.critic_opt.zero_grad()
         self.gen_opt.zero_grad()
 
@@ -132,16 +132,25 @@ class Trainer:
             fake_proba = self.critic(generated_image_stack_batch.clone().detach(), alpha, steps)
             real_image_stack_batch = torch.cat([image_cond_batch[:, :self.partid], torch.max(part_only_batch, image_cond_batch[:, self.partid:self.partid+1]),
                                                         image_cond_batch[:, self.partid+1:-1], image_batch], 1)
+
+            fooling_noise = torch.randn(real_image_stack_batch)/(0.05 * self.train_step_counter + 1)
+            real_image_stack_batch = real_image_stack_batch + fooling_noise
+
             real_image_stack_batch.requires_grad_()
             real_proba = self.critic(real_image_stack_batch, alpha, steps)
             
-            critic_loss = self.critic_loss(fake_proba, real_proba)
-            # gp = self.gradient_penalty(real_image_stack_batch, real_proba)
-            # critic_loss = critic_loss + gp
+            if torch.rand(0) <= flip_p:
+                critic_loss = self.critic_loss(fake_proba, real_proba)
+            else:
+                critic_loss = self.critic_loss(real_proba, fake_proba)
+
+            gp = self.gradient_penalty(real_image_stack_batch, real_proba)
+            critic_loss = critic_loss + gp
             critic_loss = critic_loss / self.grad_acc_every
             critic_loss.backward()
 
         self.critic_opt.step()
+        self.critic.eval()
 
         for _ in range(self.grad_acc_every):
             image_batch, image_cond_batch, part_only_batch = [item.cuda() for item in next(self.loader_G)]
@@ -171,6 +180,7 @@ class Trainer:
             gen_loss.backward()
 
         self.gen_opt.step()
+        self.critic.train()
 
         self.train_step_counter += 1
 
@@ -200,7 +210,7 @@ class Trainer:
         with open(self.results_dir / '{}/loss.log'.format(self.model_name), 'a') as file:
             file.write('Iteration: {} - Generator loss: {}\t| Discriminator loss: {}\t| Alpha: {}\t|Steps: {}\n'.format(train_iter, loss_dict['gen-loss'], loss_dict['critic-loss'], state_dict['alpha'], state_dict['steps']))
 
-    def train(self, use_sep_ln=True):
+    def train(self, use_sep_ln=True, flip_p=0.1):
         self.init_critic()
         self.init_gen()
         self.set_data_src()
@@ -215,7 +225,7 @@ class Trainer:
         assert alpha_one_till <= 50, 'Fade in shouldn\'t be separated by more than 50 batches'
         alpha_one_ctr = 0
         for train_iter in tqdm(range(self.kwargs['num-train-steps'] - self.grad_acc_every), desc='Training on samples'):
-            loss_dict = self.train_step(alpha, steps, use_sep_ln)
+            loss_dict = self.train_step(alpha, steps, use_sep_ln, flip_p)
 
             if train_iter % self.alpha_update_every == 0 and train_iter > 0:
                 # Update alpha
