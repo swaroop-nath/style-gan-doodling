@@ -46,7 +46,19 @@ class MappingNetwork(nn.Module):
         return {'_padding': 1, 'p-mode': 'zeros', '_stride': 1, 'gain': 2**0.5, 
         'l-relu-slope': 0.2, '_activation': 'l-relu', 'use-pn': True, 
         'epsilon': 1e-8, 'kernel-size': 3, 'downsample-kernel-size': 2, 'downsample-stride': 2}
-        
+
+class StyleVectorizer(nn.Module):
+    def __init__(self, emb, depth, p):
+        super().__init__()
+
+        layers = []
+        for i in range(depth):
+            layers.extend([nn.Linear(emb, emb), nn.LeakyReLU(p)])
+
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.net(x)   
 
 class Generator(nn.Module):
     def __init__(self, out_size, latent_dim, enc_channels, img_channels=3, concat_map=True):
@@ -64,8 +76,6 @@ class Generator(nn.Module):
 
         keyword_args = self._form_keyword_args()
         temp_kw_args = {'gain': 2**0.5}
-
-        # TODO: Update each conv block to accomodate for concatenation from mapping network
 
         self.initial = InitialGBlock(self.start_size, self.enlarged_channels[0], self.channels[0], latent_dim, **keyword_args)
         self.initial_rgb = EqualizedConv2dLayer(in_ch=self.enlarged_channels[0], out_ch=img_channels, kernel_size=1, padding=0, padding_mode=None, stride=1, **temp_kw_args)
