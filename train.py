@@ -61,7 +61,7 @@ class Trainer:
             self.map_net.cuda()
             self.gen.cuda()
 
-        gen_params = list(self.map_net.parameters()) + list(self.gen.parameters() + list(self.style_vec.parameters()))
+        gen_params = list(self.map_net.parameters()) + list(self.gen.parameters()) + list(self.style_vec.parameters())
         self.gen_opt = Adam(gen_params, lr=self.kwargs['lr-g'], betas=(0, 0.99)) # WGAN-gp uses Adam
 
     def init_critic(self):
@@ -97,7 +97,11 @@ class Trainer:
         return torch.randn(n, latent_dim).cuda()
 
     def noise_list(self, n, layers, latent_dim):
-        return [(self.noise(n, latent_dim), layers)]    
+        return [(self.noise(n, latent_dim), layers)]
+    
+    def mixed_list(self, n, layers, latent_dim):
+        tt = int(torch.rand(()).numpy() * layers)
+        return self.noise_list(n, tt, latent_dim) + self.noise_list(n, layers - tt, latent_dim) 
 
     def train_step(self, alpha, steps, use_sep_ln):
         self.critic_opt.zero_grad()
@@ -110,7 +114,7 @@ class Trainer:
             latent_vector, cond_feat_maps = self.map_net(image_cond_batch)
             if use_sep_ln:
                 latent_vector = None
-                noise = self.noise_list(self.batch_size, steps, self.kwargs['latent-dim'])
+                noise = self.noise(self.batch_size, self.kwargs['latent-dim'])
                 latent_vector = self.style_vec(noise)
 
             gen_imgs = self.gen(latent_vector, alpha, steps, cond_feature_maps=cond_feat_maps) # steps will be updated in the wrapper function based on the returned value of alpha
@@ -146,7 +150,7 @@ class Trainer:
             latent_vector, cond_feat_maps = self.map_net(image_cond_batch)
             if use_sep_ln:
                 latent_vector = None
-                noise = self.noise_list(self.batch_size, steps, self.kwargs['latent-dim'])
+                noise = self.noise(self.batch_size, self.kwargs['latent-dim'])
                 latent_vector = self.style_vec(noise)
 
             gen_imgs = self.gen(latent_vector, alpha, steps, cond_feature_maps=cond_feat_maps) # steps will be updated in the wrapper function based on the returned value of alpha
@@ -243,7 +247,7 @@ class Trainer:
                 self.print_log(train_iter, loss_dict, {'alpha': alpha, 'steps': steps})
 
             if train_iter % 1000 == 0 or (train_iter%250 == 0 and train_iter < 2500):
-                self.evaluate(train_iter, alpha, steps, use_sep_ln)
+                self.evaluate(num=train_iter, alpha=alpha, steps=steps, use_sep_ln=use_sep_ln)
 
         # save generator mapping net
         map_net_base_dir = self.models_dir / 'map_net/{}'.format(self.model_name)
@@ -273,7 +277,7 @@ class Trainer:
         latent_vector, cond_feat_maps = self.map_net(image_cond_batch)
         if use_sep_ln:
                 latent_vector = None
-                noise = self.noise_list(self.batch_size, steps, self.kwargs['latent-dim'])
+                noise = self.noise(image_cond_batch.size(0), self.kwargs['latent-dim'])
                 latent_vector = self.style_vec(noise)
 
         gen_imgs = self.gen(latent_vector, alpha, steps, cond_feature_maps=cond_feat_maps)

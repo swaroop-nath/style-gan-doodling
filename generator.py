@@ -5,6 +5,8 @@ from blocks import EqualizedConvBlock, InitialGBlock, SynthesisBlock
 import numpy as np
 from custom_layers import EqualizedConv2dLayer, EqualizedLinearLayer
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 class MappingNetwork(nn.Module):
     def __init__(self, in_size, in_ch, latent_dim):
         super().__init__()
@@ -53,7 +55,7 @@ class StyleVectorizer(nn.Module):
 
         layers = []
         for i in range(depth):
-            layers.extend([nn.Linear(emb, emb), nn.LeakyReLU(p)])
+            layers.extend([nn.Linear(emb, emb).to(device), nn.LeakyReLU(p).to(device)])
 
         self.net = nn.Sequential(*layers)
 
