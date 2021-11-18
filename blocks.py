@@ -100,8 +100,8 @@ class SynthesisBlock(nn.Module):
         return img
 
     def instance_norm(self, img):
-        mean = torch.mean(img, dim=1, keepdim=True)
-        std = torch.std(img, dim=1, keepdim=True)
+        mean = torch.mean(img, dim=[2, 3], keepdim=True)
+        std = torch.std(img, dim=[2, 3], keepdim=True)
 
         return (img - mean)/std
 
