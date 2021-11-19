@@ -60,11 +60,26 @@ class Discriminator(nn.Module):
         return nn.AvgPool2d(kernel_size=kernel_size, stride=stride)(img)
 
     def minibatch_std(self, x):
-        batch_stat = (torch.std(x, dim=0).mean().repeat(x.shape[0], 1, x.shape[2], x.shape[3]))
+        # Reference - https://github.com/NVlabs/stylegan/blob/master/training/networks_stylegan.py
+        def find_batch_stat(x):
+            b, c, h, w = x.shape
+            group_size = min(self.group_size, b)
+            y = x.reshape([group_size, -1, self.num_new_features,
+                        c // self.num_new_features, h, w])
+            y = y - y.mean(0, keepdim=True)
+            y = (y ** 2).mean(0, keepdim=True)
+            y = (y + 1e-8) ** 0.5
+            y = y.mean([3, 4, 5], keepdim=True).squeeze(3)  # don't keep the meaned-out channels
+            y = y.expand(group_size, -1, -1, h, w).clone().reshape(b, self.num_new_features, h, w)
+            return y
+
+        # batch_stat = torch.std(x, dim=0).mean().repeat(x.shape[0], 1, x.shape[2], x.shape[3])
+        batch_stat = find_batch_stat(x)
         return torch.cat([x, batch_stat], dim=1)
 
     def _form_keyword_args(self):
         return {'_padding': 1, 'p-mode': 'zeros', '_stride': 1, 'gain': 2**0.5, 
         'l-relu-slope': 0.2, '_activation': 'l-relu', 'use-pn': True, 
         'epsilon': 1e-8, 'kernel-size': 3, 'end-kernel-size': 4, 'end-padding': 0,
-        'downsample-kernel-size': 2, 'downsample-stride': 2}
+        'downsample-kernel-size': 2, 'downsample-stride': 2, 'intermediate-units': 32,
+        'use-one-conv-layer': True}

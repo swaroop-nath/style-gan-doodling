@@ -47,7 +47,8 @@ class MappingNetwork(nn.Module):
     def _form_keyword_args(self):
         return {'_padding': 1, 'p-mode': 'zeros', '_stride': 1, 'gain': 2**0.5, 
         'l-relu-slope': 0.2, '_activation': 'l-relu', 'use-pn': True, 
-        'epsilon': 1e-8, 'kernel-size': 3, 'downsample-kernel-size': 2, 'downsample-stride': 2}
+        'epsilon': 1e-8, 'kernel-size': 3, 'downsample-kernel-size': 2, 'downsample-stride': 2,
+        'use-one-conv-layer': True}
 
 class StyleVectorizer(nn.Module):
     def __init__(self, emb, depth, p):
@@ -109,7 +110,7 @@ class Generator(nn.Module):
 
         prev_rgb_upsampled = self.upsample(prev_rgb, upsample_mode='bilinear')
 
-        return torch.tanh(self.fade_in(alpha, curr_rgb, prev_rgb_upsampled)) # Normalizing between -1, 1
+        return self.fade_in(alpha, curr_rgb, prev_rgb_upsampled)
         
     def upsample(self, image, upsample_mode):
         return nn.Upsample(scale_factor=2, mode=upsample_mode, align_corners=False)(image)
@@ -120,5 +121,5 @@ class Generator(nn.Module):
     def _form_keyword_args(self):
         return {'_padding': 1, 'p-mode': 'zeros', '_stride': 1, 'gain': 2**0.5, 
         'l-relu-slope': 0.2, '_activation': 'l-relu', 'use-pn': True, 
-        'epsilon': 1e-8, 'kernel-size': 3}
+        'epsilon': 1e-8, 'kernel-size': 3, 'use-one-conv-layer': True}
         

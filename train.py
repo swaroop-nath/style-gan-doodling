@@ -103,7 +103,7 @@ class Trainer:
         tt = int(torch.rand(()).numpy() * layers)
         return self.noise_list(n, tt, latent_dim) + self.noise_list(n, layers - tt, latent_dim) 
 
-    def train_step(self, alpha, steps, use_sep_ln, flip_p):
+    def train_step(self, alpha, steps, use_sep_ln, flip_p, use_gp_loss, use_label_noise, loss_to_use):
         self.critic_opt.zero_grad()
         self.gen_opt.zero_grad()
 
@@ -139,13 +139,15 @@ class Trainer:
             real_image_stack_batch.requires_grad_()
             real_proba = self.critic(real_image_stack_batch, alpha, steps)
             
-            if torch.rand(1) <= flip_p:
-                critic_loss = self.critic_loss(fake_proba, real_proba)
+            # Introducing label noise
+            if torch.rand(1) <= flip_p and use_label_noise:
+                critic_loss = self.critic_loss(fake_proba, real_proba, loss_to_use)
             else:
-                critic_loss = self.critic_loss(real_proba, fake_proba)
+                critic_loss = self.critic_loss(real_proba, fake_proba, loss_to_use)
 
-            gp = self.gradient_penalty(real_image_stack_batch, real_proba)
-            critic_loss = critic_loss + gp
+            if use_gp_loss:
+                gp = self.gradient_penalty(real_image_stack_batch, real_proba)
+                critic_loss = critic_loss + gp
             critic_loss = critic_loss / self.grad_acc_every
             critic_loss.backward()
 
@@ -174,7 +176,7 @@ class Trainer:
             generated_image_stack_batch = torch.cat([image_cond_batch[:, :self.partid], torch.max(gen_imgs, image_cond_batch[:, self.partid:self.partid+1]),
                                                     image_cond_batch[:, self.partid+1:-1], gen_imgs_add], 1)
 
-            gen_fake_proba = self.critic(generated_image_stack_batch, alpha, steps)
+            gen_fake_proba = self.critic(generated_image_stack_batch, alpha, steps, loss_to_use)
             gen_loss = self.gen_loss(gen_fake_proba, gen_imgs, part_only_batch, use_sparsity_loss=self.kwargs['use-sparsity-loss'], sparsity_loss_imp=self.kwargs['sparsity-loss-imp'])
             gen_loss = gen_loss / self.grad_acc_every
             gen_loss.backward()
@@ -186,14 +188,24 @@ class Trainer:
 
         return {'gen-loss': gen_loss, 'critic-loss': critic_loss}
 
-    def critic_loss(self, fake_proba, real_proba):
+    def critic_loss(self, fake_proba, real_proba, loss_to_use):
         # proba shape == (batch_size, 1) - the final dimension gives prob of reality
         # Employing modified Wasserstein loss
         # return -(torch.mean(real_proba) - torch.mean(fake_proba))
-        return (nn.functional.relu(1 + real_proba) + nn.functional.relu(1 - fake_proba)).mean()
+        # return (nn.functional.relu(1 + real_proba) + nn.functional.relu(1 - fake_proba)).mean()
 
-    def gen_loss(self, gen_fake_proba, gen_imgs, real_imgs, use_sparsity_loss, sparsity_loss_imp):
-        gen_loss = torch.mean(gen_fake_proba) # Apparently doodlerGAN doesn't use the minus!
+        if loss_to_use == 'wgan':
+            return -(torch.mean(real_proba) - torch.mean(fake_proba))
+        elif loss_to_use == 'hinge':
+            return torch.mean(nn.functional.relu(1-real_proba) + nn.functional.relu(1+fake_proba))
+
+    def gen_loss(self, gen_fake_proba, gen_imgs, real_imgs, use_sparsity_loss, sparsity_loss_imp, loss_to_use):
+        # gen_loss = torch.mean(gen_fake_proba) # Apparently doodlerGAN doesn't use the minus!
+        if loss_to_use == 'wgan':
+            gen_loss = -torch.mean(gen_fake_proba)
+        elif loss_to_use == 'hinge':
+            gen_loss = -torch.mean(gen_fake_proba)
+
         if not use_sparsity_loss: return gen_loss
 
         gen_density = gen_imgs.view(self.batch_size, -1).sum(dim=1)
@@ -210,7 +222,7 @@ class Trainer:
         with open(self.results_dir / '{}/loss.log'.format(self.model_name), 'a') as file:
             file.write('Iteration: {} - Generator loss: {}\t| Discriminator loss: {}\t| Alpha: {}\t|Steps: {}\n'.format(train_iter, loss_dict['gen-loss'], loss_dict['critic-loss'], state_dict['alpha'], state_dict['steps']))
 
-    def train(self, use_sep_ln=True, flip_p=0.1):
+    def train(self, use_sep_ln, flip_p, use_gp_loss, use_label_noise, loss_to_use):
         self.init_critic()
         self.init_gen()
         self.set_data_src()
@@ -225,7 +237,7 @@ class Trainer:
         assert alpha_one_till <= 50, 'Fade in shouldn\'t be separated by more than 50 batches'
         alpha_one_ctr = 0
         for train_iter in tqdm(range(self.kwargs['num-train-steps'] - self.grad_acc_every), desc='Training on samples'):
-            loss_dict = self.train_step(alpha, steps, use_sep_ln, flip_p)
+            loss_dict = self.train_step(alpha, steps, use_sep_ln, flip_p, use_gp_loss, use_label_noise, loss_to_use)
 
             if train_iter % self.alpha_update_every == 0 and train_iter > 0:
                 # Update alpha
@@ -339,8 +351,15 @@ if __name__ == "__main__":
     parser.add_argument('--num_train_steps', type=int, default=50000)
     parser.add_argument('--save_every', type=int, default=1000)
     parser.add_argument('--introduce_layer_after', type=int, default=8)
+    parser.add_argument('--use_sep_ln', type=bool, default=True)
+    parser.add_argument('--flip_p', type=float, default=0.1)
+    parser.add_argument('--use_gp_loss', type=bool, default=False)
+    parser.add_argument('--use_label_noise', type=bool, default=True)
+    parser.add_argument('--loss_to_use', type=str, default='hinge')
 
     args = parser.parse_args()
+
+    assert 0 <= args.flip_p <= 0.2, 'Flipping probability can lie in the range [0, 0.2]'
 
     kwargs = {'img-channels': args.image_channels, 'latent-dim': args.latent_dim, 'lr-g': args.learning_rate_G,
             'lr-d': args.learning_rate_D, 'large-augmentation': args.large_aug, 'use-sparsity-loss': args.use_sparsity_loss,
@@ -358,4 +377,4 @@ if __name__ == "__main__":
         **kwargs
     )
 
-    trainer.train()
+    trainer.train(args.use_sep_ln, args.flip_p, args.use_gp_loss, args.use_label_noise, args.loss_to_use)

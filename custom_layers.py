@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import torch.nn.functional as F
 import torch.nn as nn
 import torch
@@ -39,6 +40,7 @@ class StyleMod(nn.Module):
         shape = [-1, 2, img.size(1)] + (img.dim() - 2) * [1] # shape == (batch_size, 2, num_channels, img_width, img_height)
         style = style.view(shape)
 
+        # Reference - https://github.com/NVlabs/stylegan/blob/master/training/networks_stylegan.py
         return img * (style[:, 0] + 1.) + style[:, 1] # Component 1 acts as the modulation and component 2 acts as the bias
 
 class EqualizedLinearLayer(nn.Module):
