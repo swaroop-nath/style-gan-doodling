@@ -176,8 +176,8 @@ class Trainer:
             generated_image_stack_batch = torch.cat([image_cond_batch[:, :self.partid], torch.max(gen_imgs, image_cond_batch[:, self.partid:self.partid+1]),
                                                     image_cond_batch[:, self.partid+1:-1], gen_imgs_add], 1)
 
-            gen_fake_proba = self.critic(generated_image_stack_batch, alpha, steps, loss_to_use)
-            gen_loss = self.gen_loss(gen_fake_proba, gen_imgs, part_only_batch, use_sparsity_loss=self.kwargs['use-sparsity-loss'], sparsity_loss_imp=self.kwargs['sparsity-loss-imp'])
+            gen_fake_proba = self.critic(generated_image_stack_batch, alpha, steps)
+            gen_loss = self.gen_loss(gen_fake_proba, gen_imgs, part_only_batch, use_sparsity_loss=self.kwargs['use-sparsity-loss'], sparsity_loss_imp=self.kwargs['sparsity-loss-imp'], loss_to_use=loss_to_use)
             gen_loss = gen_loss / self.grad_acc_every
             gen_loss.backward()
 
@@ -186,25 +186,25 @@ class Trainer:
 
         self.train_step_counter += 1
 
-        return {'gen-loss': gen_loss, 'critic-loss': critic_loss}
+        return {'gen-loss': gen_loss, 'critic-loss': critic_loss, 'real-prob': real_proba.clone().detach(), 'fake-prob': fake_proba.clone().detach()}
 
     def critic_loss(self, fake_proba, real_proba, loss_to_use):
         # proba shape == (batch_size, 1) - the final dimension gives prob of reality
         # Employing modified Wasserstein loss
         # return -(torch.mean(real_proba) - torch.mean(fake_proba))
-        # return (nn.functional.relu(1 + real_proba) + nn.functional.relu(1 - fake_proba)).mean()
+        return (nn.functional.relu(1 + real_proba) + nn.functional.relu(1 - fake_proba)).mean()
 
-        if loss_to_use == 'wgan':
-            return -(torch.mean(real_proba) - torch.mean(fake_proba))
-        elif loss_to_use == 'hinge':
-            return torch.mean(nn.functional.relu(1-real_proba) + nn.functional.relu(1+fake_proba))
+        # if loss_to_use == 'wgan':
+        #     return -(torch.mean(real_proba) - torch.mean(fake_proba))
+        # elif loss_to_use == 'hinge':
+        #     return torch.mean(nn.functional.relu(1-real_proba) + nn.functional.relu(1+fake_proba))
 
     def gen_loss(self, gen_fake_proba, gen_imgs, real_imgs, use_sparsity_loss, sparsity_loss_imp, loss_to_use):
-        # gen_loss = torch.mean(gen_fake_proba) # Apparently doodlerGAN doesn't use the minus!
-        if loss_to_use == 'wgan':
-            gen_loss = -torch.mean(gen_fake_proba)
-        elif loss_to_use == 'hinge':
-            gen_loss = -torch.mean(gen_fake_proba)
+        gen_loss = torch.mean(gen_fake_proba) # Apparently doodlerGAN doesn't use the minus!
+        # if loss_to_use == 'wgan':
+        #     gen_loss = -torch.mean(gen_fake_proba)
+        # elif loss_to_use == 'hinge':
+        #     gen_loss = -torch.mean(gen_fake_proba)
 
         if not use_sparsity_loss: return gen_loss
 
@@ -221,6 +221,12 @@ class Trainer:
 
         with open(self.results_dir / '{}/loss.log'.format(self.model_name), 'a') as file:
             file.write('Iteration: {} - Generator loss: {}\t| Discriminator loss: {}\t| Alpha: {}\t|Steps: {}\n'.format(train_iter, loss_dict['gen-loss'], loss_dict['critic-loss'], state_dict['alpha'], state_dict['steps']))
+
+        with open(self.results_dir / '{}/real_proba.log'.format(self.model_name), 'a') as file:
+                file.write(str(torch.sigmoid(loss_dict['real-prob']).view(-1)))
+
+        with open(self.results_dir / '{}/fake_proba.log'.format(self.model_name), 'a') as file:
+                file.write(str(torch.sigmoid(loss_dict['fake-prob']).view(-1)))
 
     def train(self, use_sep_ln, flip_p, use_gp_loss, use_label_noise, loss_to_use):
         self.init_critic()

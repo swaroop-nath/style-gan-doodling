@@ -68,9 +68,11 @@ class FinalDBlock(nn.Module):
         img = torch.flatten(img, start_dim=1) # Flattening each img in the batch
 
         intermediate = self.dense1(img) 
-        prob_real = torch.sigmoid(self.decider(intermediate))
-        return prob_real # Returing probability values
+        # Sigmoid can case saturation
+        # prob_real = torch.sigmoid(self.decider(intermediate))
+        # return prob_real # Returing probability values
 
+        return self.decider(intermediate)
 
 class SynthesisBlock(nn.Module):
     # Things to do - upsample, apply conv2d, add noise, apply ADAIN, apply conv2d, add noise and apply ADAIN
