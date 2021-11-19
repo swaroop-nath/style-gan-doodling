@@ -103,11 +103,10 @@ class Trainer:
         tt = int(torch.rand(()).numpy() * layers)
         return self.noise_list(n, tt, latent_dim) + self.noise_list(n, layers - tt, latent_dim) 
 
-    def train_step(self, alpha, steps, use_sep_ln, flip_p, use_gp_loss, use_label_noise, loss_to_use):
+    def train_step(self, alpha, steps, use_sep_ln, flip_p, use_gp_loss, use_label_noise, loss_to_use, factor_critic=1):
         self.critic_opt.zero_grad()
-        self.gen_opt.zero_grad()
 
-        for _ in range(self.grad_acc_every):
+        for _ in range(factor_critic * self.grad_acc_every):
             image_batch, image_cond_batch, part_only_batch = [item.cuda() for item in next(self.loader_D)]
             image_partial_batch = image_cond_batch[:, -1:, :, :]
 
@@ -141,18 +140,22 @@ class Trainer:
             
             # Introducing label noise
             if torch.rand(1) <= flip_p and use_label_noise:
-                critic_loss = self.critic_loss(fake_proba, real_proba, loss_to_use)
-            else:
                 critic_loss = self.critic_loss(real_proba, fake_proba, loss_to_use)
+            else:
+                critic_loss = self.critic_loss(fake_proba, real_proba, loss_to_use)
 
             if use_gp_loss:
                 gp = self.gradient_penalty(real_image_stack_batch, real_proba)
                 critic_loss = critic_loss + gp
-            critic_loss = critic_loss / self.grad_acc_every
+            critic_loss = critic_loss / (factor_critic * self.grad_acc_every)
             critic_loss.backward()
 
         self.critic_opt.step()
         self.critic.eval()
+
+        self.gen.train()
+        self.map_net.train()
+        self.gen_opt.zero_grad()
 
         for _ in range(self.grad_acc_every):
             image_batch, image_cond_batch, part_only_batch = [item.cuda() for item in next(self.loader_G)]
@@ -183,28 +186,30 @@ class Trainer:
 
         self.gen_opt.step()
         self.critic.train()
+        self.gen.eval()
+        self.map_net.eval()
 
         self.train_step_counter += 1
 
-        return {'gen-loss': gen_loss, 'critic-loss': critic_loss, 'real-prob': real_proba.clone().detach(), 'fake-prob': fake_proba.clone().detach()}
+        return {'gen-loss': gen_loss, 'critic-loss': critic_loss, 'real-prob': real_proba.clone().detach(), 'fake-prob': gen_fake_proba.clone().detach()}
 
     def critic_loss(self, fake_proba, real_proba, loss_to_use):
         # proba shape == (batch_size, 1) - the final dimension gives prob of reality
         # Employing modified Wasserstein loss
         # return -(torch.mean(real_proba) - torch.mean(fake_proba))
-        return (nn.functional.relu(1 + real_proba) + nn.functional.relu(1 - fake_proba)).mean()
+        # return (nn.functional.relu(1 + real_proba) + nn.functional.relu(1 - fake_proba)).mean()
 
-        # if loss_to_use == 'wgan':
-        #     return -(torch.mean(real_proba) - torch.mean(fake_proba))
-        # elif loss_to_use == 'hinge':
-        #     return torch.mean(nn.functional.relu(1-real_proba) + nn.functional.relu(1+fake_proba))
+        if loss_to_use == 'wgan':
+            return -(torch.mean(real_proba) - torch.mean(fake_proba))
+        elif loss_to_use == 'hinge':
+            return torch.mean(nn.functional.relu(1-real_proba) + nn.functional.relu(1+fake_proba))
 
     def gen_loss(self, gen_fake_proba, gen_imgs, real_imgs, use_sparsity_loss, sparsity_loss_imp, loss_to_use):
-        gen_loss = torch.mean(gen_fake_proba) # Apparently doodlerGAN doesn't use the minus!
-        # if loss_to_use == 'wgan':
-        #     gen_loss = -torch.mean(gen_fake_proba)
-        # elif loss_to_use == 'hinge':
-        #     gen_loss = -torch.mean(gen_fake_proba)
+        # gen_loss = torch.mean(gen_fake_proba) # Apparently doodlerGAN doesn't use the minus!
+        if loss_to_use == 'wgan':
+            gen_loss = -torch.mean(gen_fake_proba)
+        elif loss_to_use == 'hinge':
+            gen_loss = -torch.mean(gen_fake_proba)
 
         if not use_sparsity_loss: return gen_loss
 
@@ -350,17 +355,32 @@ if __name__ == "__main__":
     parser.add_argument('--latent_dim', type=int, default=128)
     parser.add_argument('--learning_rate_D', type=float, default=1e-4)
     parser.add_argument('--learning_rate_G', type=float, default=1e-4)
-    parser.add_argument('--large_aug', type=bool, default=False)
-    parser.add_argument('--use_sparsity_loss', type=bool, default=True)
+
+    parser.add_argument('--large_aug', dest='large_aug', action='store_true')
+    parser.add_argument('--no-large_aug', dest='large_aug', action='store_false')
+    parser.set_defaults(large_aug=False)
+
+    parser.add_argument('--use_sparsity_loss', dest='use_sparsity_loss', action='store_true')
+    parser.add_argument('--no-use_sparsity_loss', dest='use_sparsity_loss', action='store_false')
+    parser.set_defaults(use_sparsity_loss=False)
     parser.add_argument('--alpha_inc', type=float, default=1e-3)
     parser.add_argument('--sparsity_loss_imp', type=float, default=0.5)
     parser.add_argument('--num_train_steps', type=int, default=50000)
     parser.add_argument('--save_every', type=int, default=1000)
     parser.add_argument('--introduce_layer_after', type=int, default=8)
-    parser.add_argument('--use_sep_ln', type=bool, default=True)
+    
+    parser.add_argument('--use_sep_ln', dest='use_sep_ln', action='store_true')
+    parser.add_argument('--no-use_sep_ln', dest='use_sep_ln', action='store_false')
+    parser.set_defaults(use_sep_ln=False)
     parser.add_argument('--flip_p', type=float, default=0.1)
-    parser.add_argument('--use_gp_loss', type=bool, default=False)
-    parser.add_argument('--use_label_noise', type=bool, default=True)
+
+    parser.add_argument('--use_gp_loss', dest='use_gp_loss', action='store_true')
+    parser.add_argument('--no-use_gp_loss', dest='use_gp_loss', action='store_false')
+    parser.set_defaults(use_gp_loss=False)
+
+    parser.add_argument('--use_label_noise', dest='use_label_noise', action='store_true')
+    parser.add_argument('--no-use_label_noise', dest='use_label_noise', action='store_false')
+    parser.set_defaults(use_label_noise=False)
     parser.add_argument('--loss_to_use', type=str, default='hinge')
 
     args = parser.parse_args()
