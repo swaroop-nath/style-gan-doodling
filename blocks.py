@@ -58,7 +58,7 @@ class FinalDBlock(nn.Module):
             self.act2 = nn.ReLU()
 
         self.dense1 = EqualizedLinearLayer(in_size=1 * 1 * out_ch, out_size=intermediate_units, **kwargs) 
-        self.decider = EqualizedLinearLayer(in_size=intermediate_units, out_size=1 **kwargs) # Fake or not fake
+        self.decider = EqualizedLinearLayer(in_size=intermediate_units, out_size=1, **kwargs) # Fake or not fake
 
     def forward(self, img):
         # Image is already concatenated with minibatch std
